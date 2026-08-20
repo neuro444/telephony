@@ -23,6 +23,8 @@ class CallState:
     created_at: float = field(default_factory=time.monotonic)
     last_seen: float = field(default_factory=time.monotonic)
     finalized: bool = False
+    duration: int | None = None
+    hangup_cause: str | None = None
     # Idempotency guards — each action fires at most once per call.
     order_emitted_for_session: str | None = None
     manager_handoff_emitted_for_session: str | None = None
@@ -65,11 +67,13 @@ class _CallRegistry:
             state = self._calls.get(call_uuid)
             return bool(state and state.finalized)
 
-    def finalize(self, call_uuid: str, **_ignored) -> None:
+    def finalize(self, call_uuid: str, duration=None, cause=None) -> None:
         with self._lock:
             state = self._calls.get(call_uuid)
             if state is not None:
                 state.finalized = True
+                state.duration = duration
+                state.hangup_cause = cause
 
     def mark_order_emitted(self, call_uuid: str, session_id: str) -> bool:
         """Returns True if this is the first emission for this session (i.e.

@@ -15,6 +15,7 @@ from audio_cache import purge, purge_expired, read as read_audio, write as write
 from brain.client import BrainUnavailable, chat as brain_chat
 from calls import state as calls
 from orders import emitter as orders
+from cost import cost_emitter
 from security import verify_plivo
 from speech.elevenlabs_tts import TTSUnavailable, synthesize
 
@@ -47,6 +48,12 @@ async def health() -> dict:
 @app.get("/orders/recent")
 async def orders_recent(limit: int = 50) -> dict:
     return {"orders": orders.recent(limit)}
+
+
+@app.get("/cost/calls")
+async def cost_calls(limit: int = 50) -> dict:
+    records = cost_emitter.recent(limit)
+    return {"calls": records, "total_seconds": cost_emitter.total_seconds(records)}
 
 
 @app.get("/audio/{audio_id}.mp3")
@@ -219,6 +226,13 @@ async def hangup(params: dict = Depends(verify_plivo)) -> Response:
         call_uuid,
         duration=params.get("Duration"),
         cause=params.get("HangupCause"),
+    )
+    duration_raw = params.get("Duration")
+    cost_emitter.emit_call_duration(
+        call_uuid=call_uuid,
+        caller=params.get("From", ""),
+        duration_seconds=int(duration_raw) if duration_raw and duration_raw.isdigit() else None,
+        hangup_cause=params.get("HangupCause"),
     )
     purge(call_uuid)  # delete cached TTS mp3s for this call
     return Response(status_code=200)

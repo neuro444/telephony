@@ -28,6 +28,19 @@ def orders_log(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def cost_log(tmp_path, monkeypatch):
+    """Point the cost emitter at a throwaway JSONL. autouse because,
+    unlike orders (only on order_ready), cost is emitted on every
+    /voice/hangup -- any hangup test would otherwise hit config's
+    Docker-container default path (/app/...), which doesn't exist
+    outside a container."""
+    import config
+    path = tmp_path / "costs.jsonl"
+    monkeypatch.setattr(config, "COST_LOG_PATH", str(path))
+    return path
+
+
+@pytest.fixture(autouse=True)
 def clean_call_registry():
     """Call state is a module-level singleton — reset it between tests."""
     from calls import state
