@@ -11,7 +11,7 @@ from fastapi import Depends, FastAPI, Request, Response
 
 import config
 import plivo_xml
-from audio_cache import purge, read as read_audio, write as write_audio
+from audio_cache import purge, purge_expired, read as read_audio, write as write_audio
 from brain.client import BrainUnavailable, chat as brain_chat
 from calls import state as calls
 from orders import emitter as orders
@@ -59,20 +59,38 @@ async def get_audio(audio_id: str) -> Response:
 
 @app.post("/voice/answer")
 async def answer(params: dict = Depends(verify_plivo)) -> Response:
-    """Plivo hits this when a call connects."""
+    """Plivo hits this when a call connects.
+
+    The greeting is NOT hardcoded here. chat_manager writes it — it greets
+    returning callers by name and its prompt already treats a bare "hello"
+    as a request for a fresh welcome. A fixed string in the gateway would
+    throw that away and give every caller the same line.
+    """
     call_uuid = params.get("CallUUID", "")
     caller = params.get("From", "")
     calls.start(call_uuid, caller)  # new call -> no session yet
+    purge_expired()  # sweep clips from calls that never reached /voice/hangup
     logger.info("call answered call_uuid=%s from=%s", call_uuid, caller)
 
     try:
-        audio_url = tts_cached(config.GREETING, call_uuid)
+        reply = brain_chat(user_id=caller, session_id=None, message=config.GREETING_PROMPT)
+    except BrainUnavailable:
+        logger.exception("brain unreachable on answer call_uuid=%s", call_uuid)
+        return _speak_and_transfer_response(config.BRAIN_DOWN_MSG)
+
+    session_id = reply.get("session_id")
+    if session_id:
+        calls.bind_session(call_uuid, session_id)
+
+    greeting_text = reply.get("answer", "")
+    try:
+        audio_url = tts_cached(greeting_text, call_uuid)
         return xml_response(plivo_xml.play_and_continue(audio_url))
     except TTSUnavailable:
         # Plivo's own <Speak> as a fallback so a TTS outage doesn't kill
         # the very first turn of every call.
         logger.exception("TTS unavailable on greeting, falling back to <Speak>")
-        return xml_response(plivo_xml.greeting(config.GREETING))
+        return xml_response(plivo_xml.speak_and_continue(greeting_text))
 
 
 @app.post("/voice/turn")
@@ -88,7 +106,7 @@ async def turn(params: dict = Depends(verify_plivo)) -> Response:
             audio_url = tts_cached(config.REPROMPT, call_uuid)
             return xml_response(plivo_xml.play_and_continue(audio_url))
         except TTSUnavailable:
-            return xml_response(plivo_xml.greeting(config.REPROMPT))
+            return xml_response(plivo_xml.speak_and_continue(config.REPROMPT))
 
     state = calls.get(call_uuid)
     try:
@@ -104,11 +122,16 @@ async def turn(params: dict = Depends(verify_plivo)) -> Response:
             )
         except TTSUnavailable:
             # Both the brain AND TTS are down — never leave a dead line.
-            return xml_response(plivo_xml.apology_and_hangup(config.BRAIN_DOWN_MSG))
+            return xml_response(plivo_xml.speak_and_hangup(config.BRAIN_DOWN_MSG))
 
     session_id = reply.get("session_id")
     if session_id:
         calls.bind_session(call_uuid, session_id)
+
+    # Emit before synthesizing audio: a completed order must survive a TTS
+    # outage. Emitting after the tts_cached() try/except would drop exactly
+    # the orders that completed successfully.
+    _emit_events(reply, call_uuid=call_uuid, caller=caller, session_id=session_id)
 
     try:
         audio_url = tts_cached(reply["answer"], call_uuid)
@@ -116,14 +139,6 @@ async def turn(params: dict = Depends(verify_plivo)) -> Response:
         logger.exception("TTS unavailable for reply, falling back to <Speak>")
         # Degrade to Plivo's own TTS rather than drop the call.
         return _handle_flags_with_speak(reply)
-
-    # Order first: emit even if the call then ends or transfers — a
-    # confirmed order that also ends the call must still be emitted.
-    # Putting this after an early return would silently drop exactly the
-    # orders that completed successfully.
-    if reply.get("order_ready") and reply.get("order") and session_id:
-        if calls.mark_order_emitted(call_uuid, session_id):
-            orders.emit(reply, call_uuid=call_uuid, user_id=caller)
 
     # Transfer_to_Manager (live handoff) and To_manager (async cake/catering
     # follow-up) are different things — confusing them either drops a lead
@@ -139,23 +154,40 @@ async def turn(params: dict = Depends(verify_plivo)) -> Response:
     return xml_response(plivo_xml.play_and_continue(audio_url))
 
 
+def _emit_events(reply: dict, *, call_uuid: str, caller: str, session_id: str | None) -> None:
+    """Record the two artifacts a call can produce, each at most once.
+
+    order_ready -> a completed, priced order.
+    To_manager  -> an async cake/catering follow-up. NOT a live transfer:
+                   confusing it with Transfer_to_Manager either drops a lead
+                   or hangs up on a customer.
+    """
+    if not session_id:
+        return
+    if reply.get("order_ready") and reply.get("order"):
+        if calls.mark_order_emitted(call_uuid, session_id):
+            orders.emit(reply, call_uuid=call_uuid, user_id=caller)
+    if reply.get("To_manager"):
+        if calls.mark_handoff_emitted(call_uuid, session_id):
+            orders.emit_handoff(reply, call_uuid=call_uuid, user_id=caller)
+
+
+def _speak_and_transfer_response(text: str) -> Response:
+    """Spoken apology then a live transfer — used when TTS is unavailable."""
+    return xml_response(
+        plivo_xml.speak_and_transfer(text, config.PLIVO_TRANSFER_NUMBER)
+    )
+
+
 def _handle_flags_with_speak(reply: dict) -> Response:
     """Same flag routing as turn(), but via Plivo's <Speak> instead of a
     cached <Play> URL — used only when ElevenLabs TTS itself is down."""
     text = reply.get("answer", "")
     if reply.get("Transfer_to_Manager"):
-        # play_and_transfer expects an audio URL; degrade to a spoken
-        # transfer message instead since TTS is unavailable.
-        return xml_response(
-            f"<Response><Speak>{text}</Speak>"
-            f'<Dial callerId="{config.PLIVO_PHONE_NUMBER}" '
-            f'timeout="{config.TRANSFER_TIMEOUT}" dialMusic="real" '
-            f'action="{config.PLIVO_PUBLIC_BASE_URL}/voice/transfer_done" method="POST">'
-            f"<Number>{config.PLIVO_TRANSFER_NUMBER}</Number></Dial></Response>"
-        )
+        return _speak_and_transfer_response(text)
     if reply.get("call_ended"):
-        return xml_response(plivo_xml.transfer_failed(text))  # Speak + Hangup
-    return xml_response(plivo_xml.greeting(text))  # Speak + GetInput
+        return xml_response(plivo_xml.speak_and_hangup(text))
+    return xml_response(plivo_xml.speak_and_continue(text))
 
 
 @app.post("/voice/transfer_done")
@@ -172,7 +204,7 @@ async def transfer_done(params: dict = Depends(verify_plivo)) -> Response:
         params.get("DialHangupCause"),
         params.get("CallUUID"),
     )
-    return xml_response(plivo_xml.transfer_failed(config.TRANSFER_FAILED_MSG))
+    return xml_response(plivo_xml.speak_and_hangup(config.TRANSFER_FAILED_MSG))
 
 
 @app.post("/voice/hangup")

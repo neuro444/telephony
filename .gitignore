@@ -7,3 +7,4 @@ orders/*.jsonl
 .DS_Store
 venv/
 .venv/
+menu_flat.json

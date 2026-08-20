@@ -34,7 +34,7 @@ def synthesize(text: str) -> bytes:
             },
             json={
                 "text": text,
-                "model_id": "eleven_v3",
+                "model_id": config.ELEVENLABS_MODEL_ID,
                 "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
             },
             timeout=30.0,

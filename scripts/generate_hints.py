@@ -11,39 +11,18 @@ Usage:
 Prints a single line ready to paste into .env as SPEECH_HINTS=...
 Plivo's documented limits: 500 phrases / 10,000 characters max.
 
-Handles several menu shapes:
-  1. A flat list: ["Item A", "Item B", ...] or [{"name": "Item A", ...}, ...]
-  2. A dict of category -> [items]: {"Cakes": ["Black Forest", ...], ...}
-  3. A "flat rows" / CSV-style shape: {"fields": ["name","price",...],
-     "rows": [["Black Forest", 350, ...], ...]}, with the field list used
-     to find which column is "name". This is chat_manager's own menu
-     format (see menu_is_sent_as_csv_not_json in its test suite).
+Handles chat_manager's real menu shape first, since that's the actual
+source of truth this script is run against:
+  {"menu_item_fields": ["name", "price", ...], "menu_items": [[...], ...]}
+with menu_item_fields giving the column order for each positional row in
+menu_items. Falls back to more generic shapes (a flat list, or a dict of
+category -> [items]) for any other menu file.
 """
 import json
 import sys
 
 MAX_PHRASES = 500
 MAX_CHARS = 10_000
-
-
-def _names_from_flat_rows(data: dict) -> list[str] | None:
-    """Handle {"fields": [...], "rows": [[...], ...]} shape. Returns None
-    if the dict doesn't actually look like this shape."""
-    fields = data.get("fields")
-    rows = data.get("rows")
-    if not isinstance(fields, list) or not isinstance(rows, list):
-        return None
-    try:
-        name_idx = [str(f).lower() for f in fields].index("name")
-    except ValueError:
-        return None
-    names = []
-    for row in rows:
-        if isinstance(row, list) and name_idx < len(row):
-            names.append(str(row[name_idx]))
-        elif isinstance(row, dict) and "name" in row:
-            names.append(str(row["name"]))
-    return names
 
 
 def extract_names(menu_path: str, debug: bool = False) -> list[str]:
@@ -58,26 +37,42 @@ def extract_names(menu_path: str, debug: bool = False) -> list[str]:
             if data:
                 print(f"[debug] first item: {data[0]!r}", file=sys.stderr)
 
-    # Shape 3: flat rows / CSV-style (chat_manager's own format).
-    if isinstance(data, dict):
-        flat_names = _names_from_flat_rows(data)
-        if flat_names is not None:
-            if debug:
-                print(f"[debug] detected fields/rows shape, {len(flat_names)} rows", file=sys.stderr)
-            return _dedupe(flat_names)
-
     names: list[str] = []
+
+    # chat_manager's real menu_flat.json shape: rows are positional arrays
+    # whose column order is given by menu_item_fields. Checked first,
+    # because the generic dict branch below would otherwise iterate the
+    # CHARACTERS of the restaurant_name string and emit single-letter
+    # "hints" -- silently producing garbage is worse than failing.
+    if isinstance(data, dict) and "menu_items" in data:
+        fields = data.get("menu_item_fields") or []
+        try:
+            name_idx = fields.index("name")
+        except ValueError:
+            name_idx = 0
+        for row in data["menu_items"]:
+            if isinstance(row, (list, tuple)) and len(row) > name_idx:
+                names.append(str(row[name_idx]))
+            elif isinstance(row, dict) and "name" in row:
+                names.append(str(row["name"]))
+            elif isinstance(row, str):
+                names.append(row)
+        if debug:
+            print(f"[debug] detected menu_item_fields/menu_items shape, {len(names)} rows", file=sys.stderr)
+        return _dedupe(names)
+
+    # Other reasonable shapes: a flat list of items, or category -> [items].
     if isinstance(data, list):
         items = data
     elif isinstance(data, dict):
-        # Shape 2: category -> [items]. Only descend into values that are
-        # actually lists -- skip stray strings/numbers at the top level
-        # (e.g. a restaurant name or version field) so we don't iterate
-        # over a string character-by-character.
-        items = []
-        for value in data.values():
-            if isinstance(value, list):
-                items.extend(value)
+        # Only descend into values that are actually lists -- skip stray
+        # top-level strings/numbers (e.g. a restaurant name field).
+        items = [
+            item
+            for group in data.values()
+            if isinstance(group, list)
+            for item in group
+        ]
     else:
         raise ValueError(f"Unrecognized menu file shape: top-level {type(data).__name__}")
 
@@ -95,6 +90,7 @@ def extract_names(menu_path: str, debug: bool = False) -> list[str]:
 
 
 def _dedupe(names: list[str]) -> list[str]:
+    """Drop duplicates, preserve menu order."""
     seen: set[str] = set()
     unique = []
     for n in names:

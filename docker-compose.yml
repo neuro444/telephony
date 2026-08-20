@@ -3,7 +3,7 @@ services:
     build: .
     container_name: plivo-gateway
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${TELEPHONY_PORT:-8080}:8080"
       # Bound to localhost only. Public exposure happens via nginx on the
       # VPS (Phase 5) — never publish this port directly.
     env_file:
