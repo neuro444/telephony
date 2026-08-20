@@ -8,26 +8,12 @@ header — any one matching is valid.
 Without this check, anyone who learns your webhook URL can drive your phone
 agent and bill your account.
 """
-import base64
-import hashlib
 import hmac
 
 from fastapi import Request, HTTPException
+from plivo.utils import validate_v3_signature
 
 import config
-
-
-def _expected(url: str, params: dict[str, str], nonce: str, token: str) -> str:
-    payload = (
-        url
-        + "."
-        + "".join(f"{k}{v}" for k, v in sorted(params.items()))
-        + "."
-        + nonce
-    )
-    digest = hmac.new(token.encode(), payload.encode(), hashlib.sha256).digest()
-    return base64.b64encode(digest).decode()
-
 
 async def verify_plivo(request: Request) -> dict[str, str]:
     """FastAPI dependency: returns the validated form params, or raises 403."""
@@ -55,9 +41,12 @@ async def verify_plivo(request: Request) -> dict[str, str]:
     # PUBLIC_BASE_URL, not request.url — behind nginx the scheme/host Plivo
     # signed is not what FastAPI sees, and the signature would never match.
     url = config.PLIVO_PUBLIC_BASE_URL.rstrip("/") + request.url.path
-    expected = _expected(url, params, nonce, config.PLIVO_AUTH_TOKEN)
-
-    # Account may have several active tokens -> comma-separated signatures.
-    if not any(hmac.compare_digest(expected, signature) for signature in signatures):
+    method = getattr(request, "method", "POST")
+    if not any(
+        validate_v3_signature(
+            method, url, nonce, config.PLIVO_AUTH_TOKEN, signature, params
+        )
+        for signature in signatures
+    ):
         raise HTTPException(403, "invalid Plivo signature")
     return params
