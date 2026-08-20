@@ -1,0 +1,28 @@
+services:
+  gateway:
+    build: .
+    container_name: plivo-gateway
+    ports:
+      - "127.0.0.1:8080:8080"
+      # Bound to localhost only. Public exposure happens via nginx on the
+      # VPS (Phase 5) — never publish this port directly.
+    env_file:
+      - .env
+    volumes:
+      - gateway_audio:/app/audio
+      - gateway_orders:/app/orders
+    restart: unless-stopped
+    networks:
+      - default
+      - chat_manager_default
+      # chat_manager_default must already exist (created when chat_manager's
+      # own `docker compose up` runs first). This lets the gateway reach
+      # chat-manager-api by container name without publishing its port.
+
+volumes:
+  gateway_audio:
+  gateway_orders:
+
+networks:
+  chat_manager_default:
+    external: true
