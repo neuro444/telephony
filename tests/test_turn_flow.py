@@ -40,7 +40,8 @@ def stub_brain(monkeypatch, reply, capture=None):
 
 
 BASE = {"answer": "Sure thing.", "session_id": "s1", "call_ended": False,
-        "order_ready": False, "order": None, "To_manager": False}
+        "order_ready": False, "order": None, "order_type": None,
+        "To_manager": False, "summary": "", "verbatim_user_chat": []}
 
 ANSWER_FORM = {"CallUUID": "cu1", "From": "+15551234567"}
 TURN_FORM = {**ANSWER_FORM, "Speech": "two samosas"}
@@ -101,12 +102,31 @@ def test_transfer_to_manager_dials_the_manager(client, monkeypatch):
 
 def test_to_manager_does_not_transfer_the_live_call(client, monkeypatch, orders_log):
     """To_manager is an async follow-up. Dialling here hangs up on a customer."""
-    stub_brain(monkeypatch, {**BASE, "To_manager": True, "summary": "wants a cake"})
+    stub_brain(monkeypatch, {**BASE, "To_manager": True, "order_type": "cake",
+                             "summary": "wants a cake"})
     r = client.post("/voice/turn", data=TURN_FORM)
     assert "Dial" not in r.text
     assert tags(r.text) == ["GetInput"]  # conversation continues
     events = [json.loads(l) for l in orders_log.read_text().splitlines()]
     assert [e["event"] for e in events] == ["manager_handoff"]
+    assert events[0]["order_type"] == "cake"
+    assert events[0]["summary"] == "wants a cake"
+
+
+def test_completed_delivery_redirect_is_emitted_with_summary(client, monkeypatch, orders_log):
+    stub_brain(monkeypatch, {
+        **BASE,
+        "answer": "Please order delivery on our website.",
+        "call_ended": True,
+        "order_type": "delivery",
+        "summary": "Customer requested delivery and was directed to the website.",
+        "verbatim_user_chat": ["I need delivery."],
+    })
+    client.post("/voice/turn", data=TURN_FORM)
+    events = [json.loads(line) for line in orders_log.read_text().splitlines()]
+    assert events[0]["event"] == "delivery_redirect"
+    assert events[0]["order_type"] == "delivery"
+    assert events[0]["summary"] == "Customer requested delivery and was directed to the website."
 
 
 def test_silence_reprompts_instead_of_dropping_the_call(client, monkeypatch):
@@ -131,12 +151,15 @@ ORDER = {"customer_name": "Priya", "items": [{"name": "Samosa"}], "total": "25.8
 
 
 def test_order_emitted_once_with_the_object_not_the_prose(client, monkeypatch, orders_log):
-    stub_brain(monkeypatch, {**BASE, "order_ready": True, "order": ORDER})
+    stub_brain(monkeypatch, {**BASE, "order_ready": True, "order_type": "pickup",
+                             "summary": "Pickup order for Priya.", "order": ORDER})
     client.post("/voice/turn", data=TURN_FORM)
     events = [json.loads(l) for l in orders_log.read_text().splitlines()]
     assert len(events) == 1
     assert events[0]["order"] == ORDER  # never parsed out of `answer`
     assert events[0]["idempotency_key"] == "s1"
+    assert events[0]["order_type"] == "pickup"
+    assert events[0]["summary"] == "Pickup order for Priya."
 
 
 def test_duplicate_turn_does_not_emit_twice(client, monkeypatch, orders_log):
