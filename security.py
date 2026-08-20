@@ -35,9 +35,21 @@ async def verify_plivo(request: Request) -> dict[str, str]:
     if not config.PLIVO_AUTH_TOKEN:
         raise HTTPException(500, "PLIVO_AUTH_TOKEN not configured")
 
-    signature = request.headers.get("X-Plivo-Signature-V3", "")
+    # V3 is signed with the account/subaccount associated with the number;
+    # Ma-V3 is always signed with the main-account token. Accept either when
+    # it validates so a main-account credential works for subaccount traffic.
+    signature_headers = (
+        request.headers.get("X-Plivo-Signature-V3", ""),
+        request.headers.get("X-Plivo-Signature-Ma-V3", ""),
+    )
     nonce = request.headers.get("X-Plivo-Signature-V3-Nonce", "")
-    if not signature or not nonce:
+    signatures = [
+        value.strip()
+        for header in signature_headers
+        for value in header.split(",")
+        if value.strip()
+    ]
+    if not signatures or not nonce:
         raise HTTPException(403, "missing Plivo signature headers")
 
     # PUBLIC_BASE_URL, not request.url — behind nginx the scheme/host Plivo
@@ -46,8 +58,6 @@ async def verify_plivo(request: Request) -> dict[str, str]:
     expected = _expected(url, params, nonce, config.PLIVO_AUTH_TOKEN)
 
     # Account may have several active tokens -> comma-separated signatures.
-    if not any(
-        hmac.compare_digest(expected, s.strip()) for s in signature.split(",")
-    ):
+    if not any(hmac.compare_digest(expected, signature) for signature in signatures):
         raise HTTPException(403, "invalid Plivo signature")
     return params

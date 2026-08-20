@@ -135,6 +135,18 @@ def test_multiple_active_tokens_any_match_accepted(configured):
     assert _run(security.verify_plivo(req)) == params
 
 
+def test_main_account_signature_is_accepted(configured):
+    """Ma-V3 is signed with the main token even for subaccount traffic."""
+    params = {"CallUUID": "abc"}
+    good = security._expected("https://voice.test/voice/turn", params, NONCE, TOKEN)
+    req = FakeRequest(params, {
+        "X-Plivo-Signature-V3": "subaccount-signature",
+        "X-Plivo-Signature-Ma-V3": good,
+        "X-Plivo-Signature-V3-Nonce": NONCE,
+    })
+    assert _run(security.verify_plivo(req)) == params
+
+
 def test_unconfigured_token_is_500_not_a_silent_pass(configured, monkeypatch):
     """A missing token must never mean 'allow everything'."""
     monkeypatch.setattr(config, "PLIVO_AUTH_TOKEN", "")
