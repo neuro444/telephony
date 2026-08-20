@@ -22,13 +22,37 @@ def extract_names(menu_path: str) -> list[str]:
         data = json.load(fh)
 
     names: list[str] = []
-    # Tolerant of a few reasonable shapes: a flat list of items, or a dict
-    # of category -> [items]. Each item may be a string or an object with
-    # a "name" field.
+
+    # The real menu_flat.json shape: rows are positional arrays whose column
+    # order is given by menu_item_fields. Checked first, because the generic
+    # dict branch below would otherwise iterate the CHARACTERS of the
+    # restaurant_name string and emit 47 single-letter "hints" — silently
+    # producing garbage is worse than failing.
+    if isinstance(data, dict) and "menu_items" in data:
+        fields = data.get("menu_item_fields") or []
+        try:
+            name_idx = fields.index("name")
+        except ValueError:
+            name_idx = 0
+        for row in data["menu_items"]:
+            if isinstance(row, (list, tuple)) and len(row) > name_idx:
+                names.append(str(row[name_idx]))
+            elif isinstance(row, dict) and "name" in row:
+                names.append(str(row["name"]))
+            elif isinstance(row, str):
+                names.append(row)
+        return _dedupe(names)
+
+    # Other reasonable shapes: a flat list of items, or category -> [items].
     if isinstance(data, list):
         items = data
     elif isinstance(data, dict):
-        items = [item for group in data.values() for item in group]
+        items = [
+            item
+            for group in data.values()
+            if isinstance(group, list)
+            for item in group
+        ]
     else:
         raise ValueError("Unrecognized menu_flat.json shape")
 
@@ -37,8 +61,12 @@ def extract_names(menu_path: str) -> list[str]:
             names.append(item)
         elif isinstance(item, dict) and "name" in item:
             names.append(str(item["name"]))
+    return _dedupe(names)
 
-    # Dedupe, preserve order.
+
+def _dedupe(names: list[str]) -> list[str]:
+    """Drop duplicates, preserve menu order."""
+
     seen: set[str] = set()
     unique = []
     for n in names:

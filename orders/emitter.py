@@ -24,6 +24,14 @@ logger = logging.getLogger(__name__)
 _lock = threading.Lock()
 
 
+def _append(record: dict) -> None:
+    """Append one JSON record to the log. The only writer."""
+    os.makedirs(os.path.dirname(config.ORDERS_LOG_PATH), exist_ok=True)
+    with _lock:
+        with open(config.ORDERS_LOG_PATH, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
 def emit(reply: dict, *, call_uuid: str, user_id: str) -> dict:
     """Append one order_ready event to the JSONL log. Returns the record written."""
     order = reply.get("order")
@@ -37,15 +45,39 @@ def emit(reply: dict, *, call_uuid: str, user_id: str) -> dict:
         "session_id": session_id,
         "order": order,
     }
-    os.makedirs(os.path.dirname(config.ORDERS_LOG_PATH), exist_ok=True)
-    with _lock:
-        with open(config.ORDERS_LOG_PATH, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    _append(record)
     logger.info(
         "order emitted call_uuid=%s session_id=%s total=%s",
         call_uuid,
         session_id,
         (order or {}).get("total"),
+    )
+    return record
+
+
+def emit_handoff(reply: dict, *, call_uuid: str, user_id: str) -> dict:
+    """Append one manager_handoff event — the To_manager flag.
+
+    This is the ASYNC cake/catering follow-up, not a live transfer. Nothing
+    happens to the call; staff pick the lead up from this log later. Without
+    it the flag is silently dropped and the lead is lost.
+    """
+    session_id = reply.get("session_id")
+    record = {
+        "event": "manager_handoff",
+        "emitted_at": datetime.now(timezone.utc).isoformat(),
+        "idempotency_key": session_id,
+        "call_uuid": call_uuid,
+        "user_id": user_id,
+        "session_id": session_id,
+        # The caller's own words, so staff can read the request back verbatim
+        # rather than trusting a paraphrase.
+        "summary": reply.get("summary", ""),
+        "verbatim_user_chat": reply.get("verbatim_user_chat", []),
+    }
+    _append(record)
+    logger.info(
+        "manager handoff emitted call_uuid=%s session_id=%s", call_uuid, session_id
     )
     return record
 

@@ -4,9 +4,19 @@ Every interpolation goes through escape(). A caller named "Bob & Sons" or a
 menu item with "&" in it produces malformed XML otherwise, and the call
 drops with no useful error.
 """
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape, quoteattr
 
 import config
+
+
+def _attr(value: str) -> str:
+    """Quote a value for use as an XML attribute.
+
+    escape() alone does NOT escape quotes, so a value containing " would
+    terminate the attribute early and produce malformed XML. quoteattr()
+    supplies the surrounding quotes itself — callers must not add their own.
+    """
+    return quoteattr(str(value))
 
 
 def _get_input(prompt_xml: str) -> str:
@@ -15,21 +25,50 @@ def _get_input(prompt_xml: str) -> str:
     speechModel=phone_call is Plivo's model tuned for phone audio quality.
     hints boost recognition of menu terms the default model mangles.
     """
+    action_url = f"{config.PLIVO_PUBLIC_BASE_URL.rstrip('/')}/voice/turn"
     return (
-        f'<GetInput action="{config.PLIVO_PUBLIC_BASE_URL}/voice/turn" method="POST" '
+        f"<GetInput action={_attr(action_url)} method=\"POST\" "
         f'inputType="speech" speechModel="phone_call" '
-        f'language="{config.SPEECH_LANGUAGE}" '
-        f'executionTimeout="{config.EXECUTION_TIMEOUT}" '
-        f'speechEndTimeout="{config.SPEECH_END_TIMEOUT}" '
-        f'hints="{escape(config.SPEECH_HINTS)}" '
+        f"language={_attr(config.SPEECH_LANGUAGE)} "
+        f"executionTimeout={_attr(config.EXECUTION_TIMEOUT)} "
+        f"speechEndTimeout={_attr(config.SPEECH_END_TIMEOUT)} "
+        f"hints={_attr(config.SPEECH_HINTS)} "
         f'redirect="true">'
         f"{prompt_xml}"
         f"</GetInput>"
     )
 
 
-def greeting(text: str) -> str:
+def _dial(number: str) -> str:
+    """The <Dial> half of a live transfer.
+
+    action= is REQUIRED, not optional: if staff do not answer, Plivo posts
+    DialStatus=no-answer|busy|failed there and the caller is otherwise left
+    in silence. dialMusic stops the caller hearing dead air while it rings.
+    """
+    done_url = f"{config.PLIVO_PUBLIC_BASE_URL.rstrip('/')}/voice/transfer_done"
+    return (
+        f"<Dial callerId={_attr(config.PLIVO_PHONE_NUMBER)} "
+        f"timeout={_attr(config.TRANSFER_TIMEOUT)} "
+        f'dialMusic="real" '
+        f"action={_attr(done_url)} method=\"POST\">"
+        f"<Number>{escape(number)}</Number></Dial>"
+    )
+
+
+def speak_and_continue(text: str) -> str:
+    """Plivo's own TTS, then listen — the fallback when ElevenLabs is down."""
     return f"<Response>{_get_input(f'<Speak>{escape(text)}</Speak>')}</Response>"
+
+
+def speak_and_hangup(text: str) -> str:
+    """Say one last thing, then end the call. Never leave a dead line."""
+    return f"<Response><Speak>{escape(text)}</Speak><Hangup/></Response>"
+
+
+def speak_and_transfer(text: str, number: str) -> str:
+    """Spoken message, then hand the live call to staff — used when TTS is down."""
+    return f"<Response><Speak>{escape(text)}</Speak>" + _dial(number) + "</Response>"
 
 
 def play_and_continue(audio_url: str) -> str:
@@ -55,19 +94,10 @@ def play_and_transfer(audio_url: str, number: str) -> str:
     """
     return (
         f"<Response><Play>{escape(audio_url)}</Play>"
-        f'<Dial callerId="{escape(config.PLIVO_PHONE_NUMBER)}" '
-        f'timeout="{config.TRANSFER_TIMEOUT}" '
-        f'dialMusic="real" '
-        f'action="{config.PLIVO_PUBLIC_BASE_URL}/voice/transfer_done" method="POST">'
-        f"<Number>{escape(number)}</Number></Dial></Response>"
+        + _dial(number)
+        + "</Response>"
     )
 
 
-def transfer_failed(text: str) -> str:
-    """Staff did not pick up. Never drop the caller into silence."""
-    return f"<Response><Speak>{escape(text)}</Speak><Hangup/></Response>"
-
-
-def apology_and_hangup(text: str) -> str:
-    """Fallback when the brain is unreachable — never leave a dead line."""
-    return f"<Response><Speak>{escape(text)}</Speak><Hangup/></Response>"
+# transfer_failed and apology_and_hangup were byte-identical to
+# speak_and_hangup; callers use that directly.
