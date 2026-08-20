@@ -1,6 +1,6 @@
 """Plivo V3 webhook signature verification.
 
-Plivo assembles: full URL + POST params sorted case-sensitively by name
+Plivo assembles: full URL + "." + POST params sorted case-sensitively by name
 (name and value concatenated) + "." + nonce, then HMAC-SHA256 with the Auth
 Token, base64-encoded. Multiple active auth tokens produce a comma-separated
 header — any one matching is valid.
@@ -20,6 +20,7 @@ import config
 def _expected(url: str, params: dict[str, str], nonce: str, token: str) -> str:
     payload = (
         url
+        + "."
         + "".join(f"{k}{v}" for k, v in sorted(params.items()))
         + "."
         + nonce

@@ -24,8 +24,8 @@ def sign(url=URL, params=PARAMS, nonce=NONCE, token=TOKEN):
 
 
 def test_signature_matches_plivos_documented_construction():
-    """URL + sorted(k+v) + '.' + nonce, HMAC-SHA256, base64."""
-    payload = URL + "CallUUIDabcDigits1234From+15551111111" + "." + NONCE
+    """URL + '.' + sorted(k+v) + '.' + nonce, HMAC-SHA256, base64."""
+    payload = URL + ".CallUUIDabcDigits1234From+15551111111" + "." + NONCE
     expected = base64.b64encode(
         hmac.new(TOKEN.encode(), payload.encode(), hashlib.sha256).digest()
     ).decode()
