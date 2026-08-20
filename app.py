@@ -155,19 +155,23 @@ async def turn(params: dict = Depends(verify_plivo)) -> Response:
 
 
 def _emit_events(reply: dict, *, call_uuid: str, caller: str, session_id: str | None) -> None:
-    """Record the two artifacts a call can produce, each at most once.
+    """Record final typed call artifacts, each at most once.
 
     order_ready -> a completed, priced order.
     To_manager  -> an async cake/catering follow-up. NOT a live transfer:
                    confusing it with Transfer_to_Manager either drops a lead
                    or hangs up on a customer.
+    delivery    -> a completed website redirect with its summary.
     """
     if not session_id:
         return
     if reply.get("order_ready") and reply.get("order"):
         if calls.mark_order_emitted(call_uuid, session_id):
             orders.emit(reply, call_uuid=call_uuid, user_id=caller)
-    if reply.get("To_manager"):
+    is_delivery = (
+        reply.get("call_ended") and reply.get("order_type") == "delivery"
+    )
+    if reply.get("To_manager") or is_delivery:
         if calls.mark_handoff_emitted(call_uuid, session_id):
             orders.emit_handoff(reply, call_uuid=call_uuid, user_id=caller)
 

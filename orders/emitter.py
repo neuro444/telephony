@@ -43,6 +43,10 @@ def emit(reply: dict, *, call_uuid: str, user_id: str) -> dict:
         "call_uuid": call_uuid,
         "user_id": user_id,
         "session_id": session_id,
+        "order_type": reply.get("order_type") or "pickup",
+        "answer": reply.get("answer", ""),
+        "summary": reply.get("summary", ""),
+        "verbatim_user_chat": reply.get("verbatim_user_chat", []),
         "order": order,
     }
     _append(record)
@@ -63,13 +67,16 @@ def emit_handoff(reply: dict, *, call_uuid: str, user_id: str) -> dict:
     it the flag is silently dropped and the lead is lost.
     """
     session_id = reply.get("session_id")
+    order_type = reply.get("order_type")
     record = {
-        "event": "manager_handoff",
+        "event": "delivery_redirect" if order_type == "delivery" else "manager_handoff",
         "emitted_at": datetime.now(timezone.utc).isoformat(),
         "idempotency_key": session_id,
         "call_uuid": call_uuid,
         "user_id": user_id,
         "session_id": session_id,
+        "order_type": order_type,
+        "answer": reply.get("answer", ""),
         # The caller's own words, so staff can read the request back verbatim
         # rather than trusting a paraphrase.
         "summary": reply.get("summary", ""),
