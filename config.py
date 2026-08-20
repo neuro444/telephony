@@ -50,6 +50,7 @@ EXECUTION_TIMEOUT = _int("EXECUTION_TIMEOUT", 15)
 SPEECH_HINTS = os.getenv("SPEECH_HINTS", "")  # generated from menu/menu_flat.json
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 
 # ── Audio cache ───────────────────────
 AUDIO_DIR = os.getenv("AUDIO_DIR", "/app/audio")
