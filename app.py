@@ -50,6 +50,11 @@ async def orders_recent(limit: int = 50) -> dict:
     return {"orders": orders.recent(limit)}
 
 
+@app.get("/handoffs/recent")
+async def handoffs_recent(limit: int = 50) -> dict:
+    return {"handoffs": orders.recent_handoffs(limit)}
+
+
 @app.get("/cost/calls")
 async def cost_calls(limit: int = 50) -> dict:
     records = cost_emitter.recent(limit)
