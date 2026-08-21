@@ -193,6 +193,12 @@ def _emit_events(reply: dict, *, call_uuid: str, caller: str, session_id: str | 
     if reply.get("To_manager") or is_delivery:
         if calls.mark_handoff_emitted(call_uuid, session_id):
             orders.emit_handoff(reply, call_uuid=call_uuid, user_id=caller)
+            if reply.get("To_manager") and reply.get("order_type") in {
+                "cake", "catering", "cake/catering"
+            }:
+                print_client.print_manager_request(
+                    reply, call_uuid=call_uuid, caller=caller
+                )
 
 
 def _speak_and_transfer_response(text: str) -> Response:

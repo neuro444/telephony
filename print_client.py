@@ -96,3 +96,64 @@ def print_order(order: dict, *, call_uuid: str, caller: str, order_type: str | N
         # must never propagate into /voice/hangup.
         logger.exception("print request failed call_uuid=%s (non-fatal, call continues)", call_uuid)
         return False
+
+
+def print_manager_request(
+    reply: dict, *, call_uuid: str, caller: str
+) -> bool:
+    """Print a quote-free cake/catering callback sheet.
+
+    The production printer service already understands this internal shape and
+    deliberately renders it without prices. Delivery redirects are not manager
+    requests and must never use this path.
+    """
+    if not config.PRINT_API_URL:
+        logger.debug(
+            "PRINT_API_URL not set, skipping manager sheet for call_uuid=%s",
+            call_uuid,
+        )
+        return False
+
+    order_type = reply.get("order_type") or "catering"
+    transcript = reply.get("verbatim_user_chat") or []
+    details = reply.get("summary", "")
+    if transcript:
+        details = "\n".join(
+            part for part in (details, "Caller said: " + " | ".join(map(str, transcript)))
+            if part
+        )
+    payload = {
+        "id": call_uuid,
+        "caller": caller,
+        "items": [],
+        "subtotal": 0,
+        "tax": 0,
+        "total": 0,
+        "metadata": {
+            "customer_name": reply.get("name") or "no_name_given",
+            "pickup_time": "",
+            "takeaway_details": details,
+            "document_type": "manager_request",
+            "order_type": order_type,
+            "quote_free": True,
+        },
+    }
+    try:
+        r = httpx.post(
+            f"{config.PRINT_API_URL.rstrip('/')}/print/order",
+            json=payload,
+            timeout=5.0,
+        )
+        r.raise_for_status()
+        logger.info(
+            "manager print request sent call_uuid=%s status=%s",
+            call_uuid,
+            r.status_code,
+        )
+        return True
+    except Exception:
+        logger.exception(
+            "manager print request failed call_uuid=%s (non-fatal, call continues)",
+            call_uuid,
+        )
+        return False
