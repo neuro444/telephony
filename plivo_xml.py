@@ -26,6 +26,7 @@ def _get_input(prompt_xml: str) -> str:
     hints boost recognition of menu terms the default model mangles.
     """
     action_url = f"{config.PLIVO_PUBLIC_BASE_URL.rstrip('/')}/voice/turn"
+    no_input_url = f"{config.PLIVO_PUBLIC_BASE_URL.rstrip('/')}/voice/no_input"
     return (
         f"<GetInput action={_attr(action_url)} method=\"POST\" "
         f'inputType="speech" speechModel="phone_call" '
@@ -36,6 +37,10 @@ def _get_input(prompt_xml: str) -> str:
         f'redirect="true">'
         f"{prompt_xml}"
         f"</GetInput>"
+        # When no speech is recognized Plivo continues to the next XML verb
+        # instead of calling `action`. Without this redirect, reaching the end
+        # of the response disconnects the still-active caller.
+        f"<Redirect method=\"POST\">{escape(no_input_url)}</Redirect>"
     )
 
 

@@ -167,6 +167,18 @@ async def turn(params: dict = Depends(verify_plivo)) -> Response:
     return xml_response(plivo_xml.play_and_continue(audio_url))
 
 
+@app.post("/voice/no_input")
+async def no_input(params: dict = Depends(verify_plivo)) -> Response:
+    """Reprompt instead of ending the call when GetInput recognizes no speech."""
+    call_uuid = params.get("CallUUID", "")
+    logger.info("no speech detected; reprompting call_uuid=%s", call_uuid)
+    try:
+        audio_url = tts_cached(config.REPROMPT, call_uuid)
+        return xml_response(plivo_xml.play_and_continue(audio_url))
+    except TTSUnavailable:
+        return xml_response(plivo_xml.speak_and_continue(config.REPROMPT))
+
+
 def _emit_events(reply: dict, *, call_uuid: str, caller: str, session_id: str | None) -> None:
     """Record final typed call artifacts, each at most once.
 

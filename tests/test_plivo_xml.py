@@ -98,3 +98,17 @@ def test_continue_does_not_hang_up():
     doc = parse(plivo_xml.play_and_continue("https://a/b.mp3"))
     assert not doc.getElementsByTagName("Hangup")
     assert doc.getElementsByTagName("GetInput")
+
+
+def test_no_input_redirect_follows_get_input():
+    doc = parse(plivo_xml.play_and_continue("https://a/b.mp3"))
+    children = [
+        node for node in doc.documentElement.childNodes
+        if node.nodeType == node.ELEMENT_NODE
+    ]
+    assert [node.tagName for node in children] == ["GetInput", "Redirect"]
+    redirect = children[1]
+    assert redirect.firstChild.data == (
+        f"{config.PLIVO_PUBLIC_BASE_URL}/voice/no_input"
+    )
+    assert redirect.getAttribute("method") == "POST"
