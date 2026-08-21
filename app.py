@@ -16,6 +16,7 @@ from brain.client import BrainUnavailable, chat as brain_chat
 from calls import state as calls
 from orders import emitter as orders
 from cost import cost_emitter
+import print_client
 from security import verify_plivo
 from speech.elevenlabs_tts import TTSUnavailable, synthesize
 
@@ -180,6 +181,12 @@ def _emit_events(reply: dict, *, call_uuid: str, caller: str, session_id: str | 
     if reply.get("order_ready") and reply.get("order"):
         if calls.mark_order_emitted(call_uuid, session_id):
             orders.emit(reply, call_uuid=call_uuid, user_id=caller)
+            print_client.print_order(
+                reply["order"],
+                call_uuid=call_uuid,
+                caller=caller,
+                order_type=reply.get("order_type"),
+            )
     is_delivery = (
         reply.get("call_ended") and reply.get("order_type") == "delivery"
     )
