@@ -61,6 +61,7 @@ AUDIO_TTL_SECONDS = _int("AUDIO_TTL_SECONDS", 600)
 # ── Orders ────────────────────────────
 ORDERS_LOG_PATH = os.getenv("ORDERS_LOG_PATH", "/app/orders/orders.jsonl")
 COST_LOG_PATH = os.getenv("COST_LOG_PATH", "/app/cost/costs.jsonl")
+PRINT_API_URL = os.getenv("PRINT_API_URL", "")
 
 # ── Copy ──────────────────────────────
 # The greeting itself is NOT configured here — chat_manager writes it, and

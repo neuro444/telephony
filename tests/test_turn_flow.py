@@ -102,6 +102,11 @@ def test_transfer_to_manager_dials_the_manager(client, monkeypatch):
 
 def test_to_manager_does_not_transfer_the_live_call(client, monkeypatch, orders_log):
     """To_manager is an async follow-up. Dialling here hangs up on a customer."""
+    printed = []
+    monkeypatch.setattr(
+        gateway.print_client, "print_manager_request",
+        lambda reply, **kwargs: printed.append((reply, kwargs)),
+    )
     stub_brain(monkeypatch, {**BASE, "To_manager": True, "order_type": "cake",
                              "summary": "wants a cake"})
     r = client.post("/voice/turn", data=TURN_FORM)
@@ -111,6 +116,19 @@ def test_to_manager_does_not_transfer_the_live_call(client, monkeypatch, orders_
     assert [e["event"] for e in events] == ["manager_handoff"]
     assert events[0]["order_type"] == "cake"
     assert events[0]["summary"] == "wants a cake"
+    assert printed[0][1]["call_uuid"] == "cu1"
+
+
+def test_delivery_redirect_never_prints_manager_sheet(client, monkeypatch, orders_log):
+    monkeypatch.setattr(
+        gateway.print_client, "print_manager_request",
+        lambda *args, **kwargs: pytest.fail("delivery must not print a manager sheet"),
+    )
+    stub_brain(monkeypatch, {
+        **BASE, "call_ended": True, "order_type": "delivery",
+        "summary": "Directed to website.",
+    })
+    client.post("/voice/turn", data=TURN_FORM)
 
 
 def test_completed_delivery_redirect_is_emitted_with_summary(client, monkeypatch, orders_log):
