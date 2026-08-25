@@ -5,9 +5,13 @@ recent() reader for a dashboard to poll. Plivo's own /voice/hangup webhook
 already delivers Duration (seconds) and HangupCause -- this is the only
 place that data is persisted, everything else just discards it.
 
-Sgopi is building LLM token-cost tracking inside chat_manager separately;
-this covers the Plivo side of cost (call minutes). ElevenLabs TTS
-character counts are a third, still-open cost driver -- not covered here.
+Two record types share this same file/reader (GET /cost/calls already
+returns every record with no type filter, so no endpoint change needed):
+  - "call_ended": Plivo's call duration, from /voice/hangup.
+  - "llm_turn": chat_manager's /chat response data (tokens, tts_chars) for
+    one turn -- previously nothing forwarded this anywhere at all. See
+    docs/chat_manager_telephony_cost_integration.md (cost-monitoring repo)
+    for the full spec this was built against.
 """
 import json
 import logging
@@ -51,6 +55,51 @@ def emit_call_duration(
         call_uuid,
         duration_seconds,
         hangup_cause,
+    )
+    return record
+
+
+def emit_llm_turn(
+    *,
+    call_uuid: str,
+    turn_seq: int,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    tts_chars: int,
+    latency_ms: float | None = None,
+) -> dict:
+    """Append one llm_turn cost event -- one per /chat response, so a call
+    with N turns produces N of these plus the one call_ended record from
+    /voice/hangup. Fields pulled straight from chat_manager's /chat
+    response (model_used, input_tokens, output_tokens, tts_chars,
+    latency_ms) -- nothing computed here, this only reports what
+    chat_manager already told us.
+
+    turn_seq makes each call's records orderable/unique (1, 2, 3...) --
+    caller keeps its own per-call counter, see calls/state.py.
+    """
+    record = {
+        "event": "llm_turn",
+        "emitted_at": datetime.now(timezone.utc).isoformat(),
+        "call_uuid": call_uuid,
+        "turn_seq": turn_seq,
+        "model": model,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "tts_chars": tts_chars,
+        "latency_ms": latency_ms,
+    }
+    _append(record)
+    logger.info(
+        "llm turn cost emitted call_uuid=%s turn_seq=%s model=%s input_tokens=%s "
+        "output_tokens=%s tts_chars=%s",
+        call_uuid,
+        turn_seq,
+        model,
+        input_tokens,
+        output_tokens,
+        tts_chars,
     )
     return record
 
