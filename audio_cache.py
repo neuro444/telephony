@@ -11,6 +11,7 @@ import time
 import uuid
 
 import config
+import phrase_cache
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +53,17 @@ def purge(call_uuid: str) -> None:
 
 def purge_expired() -> None:
     """Best-effort sweep for anything that outlived AUDIO_TTL_SECONDS
-    (a call that never reached /voice/hangup, e.g. a hard network drop)."""
+    (a call that never reached /voice/hangup, e.g. a hard network drop).
+
+    Skips phrase_cache's "phrase-" clips -- those are permanent by design,
+    not per-call, and must never be TTL-swept.
+    """
     if not os.path.isdir(config.AUDIO_DIR):
         return
     now = time.time()
     for name in os.listdir(config.AUDIO_DIR):
+        if name.startswith(phrase_cache.PREFIX):
+            continue
         path = os.path.join(config.AUDIO_DIR, name)
         try:
             if now - os.path.getmtime(path) > config.AUDIO_TTL_SECONDS:

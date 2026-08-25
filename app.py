@@ -10,6 +10,7 @@ import logging
 from fastapi import Depends, FastAPI, Request, Response
 
 import config
+import phrase_cache
 import plivo_xml
 from audio_cache import purge, purge_expired, read as read_audio, write as write_audio
 from brain.client import BrainUnavailable, chat as brain_chat
@@ -18,7 +19,7 @@ from orders import emitter as orders
 from cost import cost_emitter
 import print_client
 from security import verify_plivo
-from speech.elevenlabs_tts import TTSUnavailable, synthesize
+from speech.elevenlabs_tts import DEFAULT_VOICE_SETTINGS, TTSUnavailable, synthesize
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("gateway")
@@ -39,6 +40,23 @@ def tts_cached(text: str, call_uuid: str) -> str:
     """
     audio_bytes = synthesize(text)
     return write_audio(audio_bytes, call_uuid)
+
+
+def tts_cached_phrase(text: str) -> str:
+    """Like tts_cached, but for a fixed phrase spoken identically on every
+    call (REPROMPT, BRAIN_DOWN_MSG) -- persists across calls instead of
+    being deleted on hangup, so ElevenLabs is only ever paid once per
+    distinct phrase, not once per call.
+    """
+    audio_id = phrase_cache.audio_id_for(
+        text,
+        voice_id=config.ELEVENLABS_VOICE_ID,
+        model_id=config.ELEVENLABS_MODEL_ID,
+        voice_settings=DEFAULT_VOICE_SETTINGS,
+    )
+    if not phrase_cache.exists(audio_id):
+        phrase_cache.put(audio_id, synthesize(text))
+    return f"{config.PLIVO_PUBLIC_BASE_URL.rstrip('/')}/audio/{audio_id}.mp3"
 
 
 @app.get("/health")
@@ -116,7 +134,7 @@ async def turn(params: dict = Depends(verify_plivo)) -> Response:
     # Caller said nothing intelligible. Re-prompt rather than dropping the call.
     if not speech:
         try:
-            audio_url = tts_cached(config.REPROMPT, call_uuid)
+            audio_url = tts_cached_phrase(config.REPROMPT)
             return xml_response(plivo_xml.play_and_continue(audio_url))
         except TTSUnavailable:
             return xml_response(plivo_xml.speak_and_continue(config.REPROMPT))
@@ -129,7 +147,7 @@ async def turn(params: dict = Depends(verify_plivo)) -> Response:
     except BrainUnavailable:
         logger.exception("brain unreachable call_uuid=%s", call_uuid)
         try:
-            audio_url = tts_cached(config.BRAIN_DOWN_MSG, call_uuid)
+            audio_url = tts_cached_phrase(config.BRAIN_DOWN_MSG)
             return xml_response(
                 plivo_xml.play_and_transfer(audio_url, config.PLIVO_TRANSFER_NUMBER)
             )
@@ -173,7 +191,7 @@ async def no_input(params: dict = Depends(verify_plivo)) -> Response:
     call_uuid = params.get("CallUUID", "")
     logger.info("no speech detected; reprompting call_uuid=%s", call_uuid)
     try:
-        audio_url = tts_cached(config.REPROMPT, call_uuid)
+        audio_url = tts_cached_phrase(config.REPROMPT)
         return xml_response(plivo_xml.play_and_continue(audio_url))
     except TTSUnavailable:
         return xml_response(plivo_xml.speak_and_continue(config.REPROMPT))

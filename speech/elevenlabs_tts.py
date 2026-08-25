@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 
 _ELEVENLABS_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
 
+# Shared with phrase_cache's cache key -- if this ever changes, cached clips
+# must stop matching, so it can't live only inline in the request body below.
+DEFAULT_VOICE_SETTINGS = {"stability": 0.5, "similarity_boost": 0.75}
+
 
 class TTSUnavailable(RuntimeError):
     """Raised when ElevenLabs cannot be reached or returns an error."""
@@ -35,7 +39,7 @@ def synthesize(text: str) -> bytes:
             json={
                 "text": text,
                 "model_id": config.ELEVENLABS_MODEL_ID,
-                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+                "voice_settings": DEFAULT_VOICE_SETTINGS,
             },
             timeout=30.0,
         )

@@ -162,6 +162,33 @@ def test_getinput_timeout_reprompts_instead_of_ending_call(client):
     assert "Hangup" not in r.text
 
 
+def test_repeated_reprompt_hits_the_phrase_cache_not_elevenlabs(client, monkeypatch):
+    """The whole point of phase 1: after the first REPROMPT synth, every
+    later reprompt -- same call or a different one -- must skip ElevenLabs
+    entirely, not just skip it within one call."""
+    calls_made = []
+    monkeypatch.setattr(gateway, "synthesize", lambda text: calls_made.append(text) or b"FAKEMP3")
+
+    r1 = client.post("/voice/turn", data={**ANSWER_FORM, "Speech": "   "})
+    r2 = client.post("/voice/no_input", data={**ANSWER_FORM, "CallUUID": "cu2"})
+
+    assert len(calls_made) == 1  # second reprompt was a cache hit
+    assert "Play" in r1.text and "Play" in r2.text
+
+
+def test_reprompt_clip_survives_hangup_purge(client, monkeypatch):
+    """Per-call clips are deleted on hangup; the persistent phrase cache
+    must not be -- otherwise every call re-pays for the same REPROMPT."""
+    monkeypatch.setattr(gateway, "synthesize", lambda text: b"FAKEMP3")
+    client.post("/voice/turn", data={**ANSWER_FORM, "Speech": "   "})
+    client.post("/voice/hangup", data=ANSWER_FORM)
+
+    calls_made = []
+    monkeypatch.setattr(gateway, "synthesize", lambda text: calls_made.append(text) or b"FAKEMP3")
+    client.post("/voice/turn", data={**ANSWER_FORM, "Speech": "   "})
+    assert not calls_made  # still cached after the call that made it ended
+
+
 def test_unknown_flags_are_ignored_not_fatal(client, monkeypatch):
     """chat_manager passes new prompt-defined fields through automatically."""
     stub_brain(monkeypatch, {**BASE, "some_future_flag": True, "nested": {"a": 1}})
