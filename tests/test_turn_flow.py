@@ -63,7 +63,7 @@ def test_answer_asks_the_brain_for_the_greeting(client, monkeypatch):
     assert seen[0]["message"] == config.GREETING_PROMPT
     assert seen[0]["session_id"] is None  # a new call starts a new session
     assert seen[0]["user_id"] == "+15551234567"  # caller id IS the user id
-    assert tags(r.text) == ["GetInput"]
+    assert tags(r.text) == ["GetInput", "Redirect"]
 
 
 def test_answer_binds_the_session_for_later_turns(client, monkeypatch):
@@ -80,7 +80,7 @@ def test_answer_binds_the_session_for_later_turns(client, monkeypatch):
 def test_normal_reply_plays_and_listens_again(client, monkeypatch):
     stub_brain(monkeypatch, BASE)
     r = client.post("/voice/turn", data=TURN_FORM)
-    assert tags(r.text) == ["GetInput"]
+    assert tags(r.text) == ["GetInput", "Redirect"]
     assert "Hangup" not in r.text and "Dial" not in r.text
 
 
@@ -111,7 +111,7 @@ def test_to_manager_does_not_transfer_the_live_call(client, monkeypatch, orders_
                              "summary": "wants a cake"})
     r = client.post("/voice/turn", data=TURN_FORM)
     assert "Dial" not in r.text
-    assert tags(r.text) == ["GetInput"]  # conversation continues
+    assert tags(r.text) == ["GetInput", "Redirect"]  # conversation continues
     events = [json.loads(l) for l in orders_log.read_text().splitlines()]
     assert [e["event"] for e in events] == ["manager_handoff"]
     assert events[0]["order_type"] == "cake"
@@ -151,8 +151,15 @@ def test_silence_reprompts_instead_of_dropping_the_call(client, monkeypatch):
     called = []
     stub_brain(monkeypatch, BASE, called)
     r = client.post("/voice/turn", data={**ANSWER_FORM, "Speech": "   "})
-    assert tags(r.text) == ["GetInput"]
+    assert tags(r.text) == ["GetInput", "Redirect"]
     assert not called  # nothing to ask the brain about
+
+
+def test_getinput_timeout_reprompts_instead_of_ending_call(client):
+    r = client.post("/voice/no_input", data=ANSWER_FORM)
+    assert r.status_code == 200
+    assert "GetInput" in r.text and "Redirect" in r.text
+    assert "Hangup" not in r.text
 
 
 def test_unknown_flags_are_ignored_not_fatal(client, monkeypatch):
@@ -160,7 +167,7 @@ def test_unknown_flags_are_ignored_not_fatal(client, monkeypatch):
     stub_brain(monkeypatch, {**BASE, "some_future_flag": True, "nested": {"a": 1}})
     r = client.post("/voice/turn", data=TURN_FORM)
     assert r.status_code == 200
-    assert tags(r.text) == ["GetInput"]
+    assert tags(r.text) == ["GetInput", "Redirect"]
 
 
 # ── order emission ────────────────────────────────────────────────────────
