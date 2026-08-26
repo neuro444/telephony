@@ -8,10 +8,17 @@ services:
       # VPS (Phase 5) — never publish this port directly.
     env_file:
       - .env
+    environment:
+      # Keep mutable data outside /app. Mounting a named volume on /app/orders
+      # or /app/cost hides the Python package copied into the image and leaves
+      # rebuilt containers running stale code from the persistent volume.
+      AUDIO_DIR: /data/audio
+      ORDERS_LOG_PATH: /data/orders/orders.jsonl
+      COST_LOG_PATH: /data/cost/costs.jsonl
     volumes:
-      - gateway_audio:/app/audio
-      - gateway_orders:/app/orders
-      - gateway_cost:/app/cost
+      - gateway_audio:/data/audio
+      - gateway_orders:/data/orders
+      - gateway_cost:/data/cost
     restart: unless-stopped
     networks:
       - default

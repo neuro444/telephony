@@ -55,12 +55,12 @@ ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
 
 # ── Audio cache ───────────────────────
-AUDIO_DIR = os.getenv("AUDIO_DIR", "/app/audio")
+AUDIO_DIR = os.getenv("AUDIO_DIR", "/data/audio")
 AUDIO_TTL_SECONDS = _int("AUDIO_TTL_SECONDS", 600)
 
 # ── Orders ────────────────────────────
-ORDERS_LOG_PATH = os.getenv("ORDERS_LOG_PATH", "/app/orders/orders.jsonl")
-COST_LOG_PATH = os.getenv("COST_LOG_PATH", "/app/cost/costs.jsonl")
+ORDERS_LOG_PATH = os.getenv("ORDERS_LOG_PATH", "/data/orders/orders.jsonl")
+COST_LOG_PATH = os.getenv("COST_LOG_PATH", "/data/cost/costs.jsonl")
 PRINT_API_URL = os.getenv("PRINT_API_URL", "")
 
 # ── Copy ──────────────────────────────
