@@ -57,6 +57,9 @@ ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
 # ── Audio cache ───────────────────────
 AUDIO_DIR = os.getenv("AUDIO_DIR", "/app/audio")
 AUDIO_TTL_SECONDS = _int("AUDIO_TTL_SECONDS", 600)
+# Persistent phrase cache — survives container restarts via mounted volume.
+# Stores ElevenLabs audio for fixed phrases so they are never synthesized twice.
+PHRASE_CACHE_DIR = os.getenv("PHRASE_CACHE_DIR", "/app/phrase_cache")
 
 # ── Orders ────────────────────────────
 ORDERS_LOG_PATH = os.getenv("ORDERS_LOG_PATH", "/app/orders/orders.jsonl")

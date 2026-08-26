@@ -20,6 +20,7 @@ import security
 def client(monkeypatch, orders_log, tmp_path):
     """A TestClient with signature verification and TTS stubbed out."""
     monkeypatch.setattr(config, "AUDIO_DIR", str(tmp_path / "audio"))
+    monkeypatch.setattr(config, "PHRASE_CACHE_DIR", str(tmp_path / "phrase_cache"))
 
     async def _no_verify(request: Request):
         return {k: v for k, v in (await request.form()).multi_items()}
@@ -288,3 +289,58 @@ def test_fallback_dials_the_restaurant(client):
     """Reached only if /voice/answer itself is unreachable."""
     r = client.post("/voice/fallback", data=ANSWER_FORM)
     assert "<Dial" in r.text
+
+
+# ── phrase cache integration ───────────────────────────────────────────────────
+
+def test_reprompt_served_from_phrase_cache_on_second_call(client, monkeypatch):
+    """The reprompt URL must be identical on a second silence — it hit the cache."""
+    synthesize_calls = []
+    monkeypatch.setattr(
+        gateway, "synthesize", lambda text: synthesize_calls.append(text) or b"FAKEMP3"
+    )
+    # Two turns with no speech — both should serve the REPROMPT
+    r1 = client.post("/voice/turn", data={**ANSWER_FORM, "Speech": ""})
+    r2 = client.post("/voice/turn", data={**ANSWER_FORM, "Speech": ""})
+    assert r1.status_code == r2.status_code == 200
+    # synthesize() must have been called exactly once (first miss); second hit from cache
+    reprompt_synths = [t for t in synthesize_calls if t == config.REPROMPT]
+    assert len(reprompt_synths) == 1, (
+        f"Expected 1 synthesis of REPROMPT (cache hit on 2nd), got {len(reprompt_synths)}"
+    )
+    # Both responses must reference a /phrase/ URL, not a per-call /audio/ URL
+    assert "/phrase/" in r1.text
+    assert "/phrase/" in r2.text
+
+
+def test_phrase_cache_url_not_used_for_dynamic_llm_reply(client, monkeypatch):
+    """Normal LLM replies must go through the per-call /audio/ cache, not /phrase/."""
+    stub_brain(monkeypatch, BASE)
+    r = client.post("/voice/turn", data=TURN_FORM)
+    assert r.status_code == 200
+    # Dynamic reply URLs come from audio_cache (/audio/), not phrase_cache (/phrase/)
+    assert "/audio/" in r.text
+    assert "/phrase/" not in r.text
+
+
+def test_phrase_cache_files_survive_hangup_purge(client, monkeypatch, tmp_path):
+    """purge() must not delete phrase_cache files — only per-call /audio/ clips."""
+    import os
+    import config as cfg
+
+    synthesize_calls = []
+    monkeypatch.setattr(
+        gateway, "synthesize", lambda text: synthesize_calls.append(text) or b"FAKEMP3"
+    )
+    # Prime the phrase cache with one reprompt
+    client.post("/voice/turn", data={**ANSWER_FORM, "Speech": ""})
+    phrase_dir = cfg.PHRASE_CACHE_DIR
+    assert os.path.isdir(phrase_dir)
+    files_before = set(os.listdir(phrase_dir))
+    assert files_before  # at least the REPROMPT mp3
+
+    # Simulate hangup — purge() should only touch AUDIO_DIR
+    client.post("/voice/hangup", data={**ANSWER_FORM, "Duration": "30", "HangupCause": "NORMAL_CLEARING"})
+
+    files_after = set(os.listdir(phrase_dir))
+    assert files_before == files_after, "purge() must not delete phrase cache files"

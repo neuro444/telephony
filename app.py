@@ -6,10 +6,12 @@ This gateway is audio-in / audio-out and knows nothing about cake.
 Every decision below follows from that one line.
 """
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request, Response
 
 import config
+import phrase_cache as pc
 import plivo_xml
 from audio_cache import purge, purge_expired, read as read_audio, write as write_audio
 from brain.client import BrainUnavailable, chat as brain_chat
@@ -23,22 +25,72 @@ from speech.elevenlabs_tts import TTSUnavailable, synthesize
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("gateway")
 
-app = FastAPI(title="Plivo Telephony Gateway")
+
+def _prewarm_fixed_phrases() -> None:
+    """Synthesize fixed phrases once at startup and store in phrase cache.
+
+    Logs the active voice/model so operators know what parameters the cache
+    was built against — helpful if ELEVENLABS_VOICE_ID or ELEVENLABS_MODEL_ID
+    ever changes (old files become unreachable; new ones are synthesized fresh).
+    Pre-warm failures are non-fatal: the system starts normally and synthesizes
+    on demand for the first caller.
+    """
+    logger.info(
+        "phrase cache pre-warm starting voice_id=%s model_id=%s dir=%s",
+        config.ELEVENLABS_VOICE_ID,
+        config.ELEVENLABS_MODEL_ID,
+        config.PHRASE_CACHE_DIR,
+    )
+    for label, text in [
+        ("REPROMPT", config.REPROMPT),
+        ("BRAIN_DOWN_MSG", config.BRAIN_DOWN_MSG),
+    ]:
+        try:
+            if pc.get(text):
+                logger.info("phrase cache already warm: %s", label)
+                continue
+            audio_bytes = synthesize(text)
+            pc.put(text, audio_bytes)
+            logger.info("phrase cache pre-warmed: %s", label)
+        except Exception:
+            logger.exception(
+                "phrase cache pre-warm failed for %s — will synthesize on demand", label
+            )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _prewarm_fixed_phrases()
+    yield
+
+
+app = FastAPI(title="Plivo Telephony Gateway", lifespan=lifespan)
 
 
 def xml_response(body: str) -> Response:
     return Response(content=body, media_type="application/xml")
 
 
-def tts_cached(text: str, call_uuid: str) -> str:
+def tts_cached(text: str, call_uuid: str, *, use_phrase_cache: bool = False) -> str:
     """Synthesize once, cache to disk, return the URL for <Play>.
 
-    On TTS failure, falls back to Plivo's own <Speak> is handled by the
-    caller (see the BrainUnavailable path in /voice/turn) — this function
-    itself just surfaces TTSUnavailable so callers can decide.
+    use_phrase_cache=True  → check the persistent phrase cache first.
+        HIT:  return the stored URL, ElevenLabs is not called ($0 cost).
+        MISS: synthesize via ElevenLabs, store permanently for all future calls.
+    use_phrase_cache=False (default) → per-call ephemeral cache only, as before.
+        Audio is written to audio_cache and purged on hangup.
+
+    TTSUnavailable is surfaced to callers so they can decide how to degrade
+    (see the BrainUnavailable path in /voice/turn for an example).
     """
+    if use_phrase_cache:
+        url = pc.get(text)
+        if url:
+            return url  # cache hit — skip ElevenLabs entirely
     audio_bytes = synthesize(text)
-    return write_audio(audio_bytes, call_uuid)
+    if use_phrase_cache:
+        return pc.put(text, audio_bytes)  # store permanently, serve from /phrase/
+    return write_audio(audio_bytes, call_uuid)  # ephemeral, purged on hangup
 
 
 @app.get("/health")
@@ -65,6 +117,19 @@ async def cost_calls(limit: int = 50) -> dict:
 @app.get("/audio/{audio_id}.mp3")
 async def get_audio(audio_id: str) -> Response:
     data = read_audio(audio_id)
+    if data is None:
+        return Response(status_code=404)
+    return Response(content=data, media_type="audio/mpeg")
+
+
+@app.get("/phrase/{key}.mp3")
+async def get_phrase_audio(key: str) -> Response:
+    """Serve a permanently cached phrase clip.
+
+    Kept separate from /audio/ so phrase files are never accidentally swept
+    by purge() (which only touches per-call clips in AUDIO_DIR).
+    """
+    data = pc.read(key)
     if data is None:
         return Response(status_code=404)
     return Response(content=data, media_type="audio/mpeg")
@@ -116,7 +181,7 @@ async def turn(params: dict = Depends(verify_plivo)) -> Response:
     # Caller said nothing intelligible. Re-prompt rather than dropping the call.
     if not speech:
         try:
-            audio_url = tts_cached(config.REPROMPT, call_uuid)
+            audio_url = tts_cached(config.REPROMPT, call_uuid, use_phrase_cache=True)
             return xml_response(plivo_xml.play_and_continue(audio_url))
         except TTSUnavailable:
             return xml_response(plivo_xml.speak_and_continue(config.REPROMPT))
@@ -129,7 +194,7 @@ async def turn(params: dict = Depends(verify_plivo)) -> Response:
     except BrainUnavailable:
         logger.exception("brain unreachable call_uuid=%s", call_uuid)
         try:
-            audio_url = tts_cached(config.BRAIN_DOWN_MSG, call_uuid)
+            audio_url = tts_cached(config.BRAIN_DOWN_MSG, call_uuid, use_phrase_cache=True)
             return xml_response(
                 plivo_xml.play_and_transfer(audio_url, config.PLIVO_TRANSFER_NUMBER)
             )
@@ -190,7 +255,7 @@ async def no_input(params: dict = Depends(verify_plivo)) -> Response:
     call_uuid = params.get("CallUUID", "")
     logger.info("no speech detected; reprompting call_uuid=%s", call_uuid)
     try:
-        audio_url = tts_cached(config.REPROMPT, call_uuid)
+        audio_url = tts_cached(config.REPROMPT, call_uuid, use_phrase_cache=True)
         return xml_response(plivo_xml.play_and_continue(audio_url))
     except TTSUnavailable:
         return xml_response(plivo_xml.speak_and_continue(config.REPROMPT))

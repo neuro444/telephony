@@ -12,6 +12,7 @@ services:
       - gateway_audio:/app/audio
       - gateway_orders:/app/orders
       - gateway_cost:/app/cost
+      - gateway_phrase_cache:/app/phrase_cache
     restart: unless-stopped
     networks:
       - default
@@ -24,6 +25,7 @@ volumes:
   gateway_audio:
   gateway_orders:
   gateway_cost:
+  gateway_phrase_cache:
 
 networks:
   chat_manager_default:
