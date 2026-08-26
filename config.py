@@ -35,6 +35,9 @@ BRAIN_API_KEY = os.getenv("BRAIN_API_KEY", "")
 BRAIN_API_KEY_HEADER = os.getenv("BRAIN_API_KEY_HEADER", "X-API-Key")
 BRAIN_TIMEOUT = _float("BRAIN_TIMEOUT", 20.0)
 
+# Server-to-server dashboard access for order, handoff, and cost feeds.
+DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "")
+
 # ── Transfer ──────────────────────────
 PLIVO_TRANSFER_NUMBER = os.getenv("PLIVO_TRANSFER_NUMBER", "")  # manager, E.164
 TRANSFER_TIMEOUT = _int("TRANSFER_TIMEOUT", 25)
