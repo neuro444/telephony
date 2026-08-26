@@ -65,9 +65,16 @@ def line(title: str) -> None:
     print(f"\n--- {title} ---")
 
 
+_last_count = 0
+
+
 def status() -> None:
-    print(f"  ElevenLabs calls so far: {len(synth_calls)} {synth_calls}")
-    print(f"  files in AUDIO_DIR:      {sorted(os.listdir(AUDIO_DIR))}")
+    global _last_count
+    new_calls = len(synth_calls) - _last_count
+    verdict = f"(+{new_calls} new ElevenLabs call{'s' if new_calls != 1 else ''} just now)"
+    print(f"  {verdict}  [running total: {len(synth_calls)} {synth_calls}]")
+    print(f"  files in AUDIO_DIR: {sorted(os.listdir(AUDIO_DIR))}")
+    _last_count = len(synth_calls)
 
 
 print(f"AUDIO_DIR (throwaway): {AUDIO_DIR}")
