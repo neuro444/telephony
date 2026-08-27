@@ -36,6 +36,8 @@ def emit(reply: dict, *, call_uuid: str, user_id: str) -> dict:
         "user_id": user_id,
         "session_id": session_id,
         "order_type": reply.get("order_type") or "pickup",
+        "status": "received",
+        "approval_pending": True,
         "answer": reply.get("answer", ""),
         "summary": reply.get("summary", ""),
         "verbatim_user_chat": reply.get("verbatim_user_chat", []),
