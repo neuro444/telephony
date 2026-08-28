@@ -28,6 +28,9 @@ class CallState:
     # Idempotency guards — each action fires at most once per call.
     order_emitted_for_session: str | None = None
     manager_handoff_emitted_for_session: str | None = None
+    # Incrementing counter so each turn's cost event has a unique, orderable
+    # turn_seq (1, 2, 3...) — see cost/cost_emitter.py:emit_llm_turn.
+    turn_count: int = 0
 
 
 class _CallRegistry:
@@ -97,6 +100,15 @@ class _CallRegistry:
             state.manager_handoff_emitted_for_session = session_id
             return True
 
+    def next_turn_seq(self, call_uuid: str) -> int:
+        """Returns 1 on a call's first turn, 2 on its second, etc."""
+        with self._lock:
+            state = self._calls.get(call_uuid)
+            if state is None:
+                return 1
+            state.turn_count += 1
+            return state.turn_count
+
     def _evict_expired(self) -> None:
         now = time.monotonic()
         expired = [
@@ -119,3 +131,4 @@ already_finalized = registry.already_finalized
 finalize = registry.finalize
 mark_order_emitted = registry.mark_order_emitted
 mark_handoff_emitted = registry.mark_handoff_emitted
+next_turn_seq = registry.next_turn_seq

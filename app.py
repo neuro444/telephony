@@ -157,6 +157,23 @@ async def turn(params: dict = Depends(verify_plivo)) -> Response:
     # the orders that completed successfully.
     _emit_events(reply, call_uuid=call_uuid, caller=caller, session_id=session_id)
 
+    # One llm_turn cost record per turn -- previously nothing forwarded this
+    # data anywhere at all, only Plivo's own call-minute cost was tracked.
+    # Wrapped: a cost-logging failure (e.g. disk full) must never crash the
+    # turn and strand the caller before they hear a reply.
+    try:
+        cost_emitter.emit_llm_turn(
+            call_uuid=call_uuid,
+            turn_seq=calls.next_turn_seq(call_uuid),
+            model=reply.get("model_used", ""),
+            input_tokens=reply.get("input_tokens", 0),
+            output_tokens=reply.get("output_tokens", 0),
+            tts_chars=reply.get("tts_chars", 0),
+            latency_ms=reply.get("latency_ms"),
+        )
+    except Exception:
+        logger.exception("failed to emit llm_turn cost record call_uuid=%s", call_uuid)
+
     try:
         audio_url = tts_cached(reply["answer"], call_uuid)
     except TTSUnavailable:
