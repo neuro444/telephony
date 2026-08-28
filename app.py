@@ -5,10 +5,11 @@ chat_manager is text-in / text-out and knows nothing about audio.
 This gateway is audio-in / audio-out and knows nothing about cake.
 Every decision below follows from that one line.
 """
+import hmac
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 
 import config
 import phrase_cache as pc
@@ -67,6 +68,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Plivo Telephony Gateway", lifespan=lifespan)
 
 
+def require_dashboard_api_key(
+    x_api_key: str = Header(default="", alias="X-API-Key"),
+) -> None:
+    """Protect operational feeds while leaving Plivo webhooks unchanged."""
+    if not config.DASHBOARD_API_KEY:
+        raise HTTPException(503, "dashboard API key is not configured")
+    if not hmac.compare_digest(x_api_key, config.DASHBOARD_API_KEY):
+        raise HTTPException(401, "invalid or missing API key")
+
+
 def xml_response(body: str) -> Response:
     return Response(content=body, media_type="application/xml")
 
@@ -98,17 +109,17 @@ async def health() -> dict:
     return {"status": "ok", "brain_url": config.CHAT_MANAGER_URL}
 
 
-@app.get("/orders/recent")
+@app.get("/orders/recent", dependencies=[Depends(require_dashboard_api_key)])
 async def orders_recent(limit: int = 50) -> dict:
     return {"orders": orders.recent(limit)}
 
 
-@app.get("/handoffs/recent")
+@app.get("/handoffs/recent", dependencies=[Depends(require_dashboard_api_key)])
 async def handoffs_recent(limit: int = 50) -> dict:
     return {"handoffs": orders.recent_handoffs(limit)}
 
 
-@app.get("/cost/calls")
+@app.get("/cost/calls", dependencies=[Depends(require_dashboard_api_key)])
 async def cost_calls(limit: int = 50) -> dict:
     records = cost_emitter.recent(limit)
     return {"calls": records, "total_seconds": cost_emitter.total_seconds(records)}

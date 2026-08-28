@@ -35,6 +35,9 @@ BRAIN_API_KEY = os.getenv("BRAIN_API_KEY", "")
 BRAIN_API_KEY_HEADER = os.getenv("BRAIN_API_KEY_HEADER", "X-API-Key")
 BRAIN_TIMEOUT = _float("BRAIN_TIMEOUT", 20.0)
 
+# Server-to-server dashboard access for order, handoff, and cost feeds.
+DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "")
+
 # ── Transfer ──────────────────────────
 PLIVO_TRANSFER_NUMBER = os.getenv("PLIVO_TRANSFER_NUMBER", "")  # manager, E.164
 TRANSFER_TIMEOUT = _int("TRANSFER_TIMEOUT", 25)
@@ -55,15 +58,15 @@ ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
 
 # ── Audio cache ───────────────────────
-AUDIO_DIR = os.getenv("AUDIO_DIR", "/app/audio")
+AUDIO_DIR = os.getenv("AUDIO_DIR", "/data/audio")
 AUDIO_TTL_SECONDS = _int("AUDIO_TTL_SECONDS", 600)
 # Persistent phrase cache — survives container restarts via mounted volume.
 # Stores ElevenLabs audio for fixed phrases so they are never synthesized twice.
 PHRASE_CACHE_DIR = os.getenv("PHRASE_CACHE_DIR", "/app/phrase_cache")
 
 # ── Orders ────────────────────────────
-ORDERS_LOG_PATH = os.getenv("ORDERS_LOG_PATH", "/app/orders/orders.jsonl")
-COST_LOG_PATH = os.getenv("COST_LOG_PATH", "/app/cost/costs.jsonl")
+ORDERS_LOG_PATH = os.getenv("ORDERS_LOG_PATH", "/data/orders/orders.jsonl")
+COST_LOG_PATH = os.getenv("COST_LOG_PATH", "/data/cost/costs.jsonl")
 PRINT_API_URL = os.getenv("PRINT_API_URL", "")
 
 # ── Copy ──────────────────────────────
