@@ -34,12 +34,19 @@ def _append(record: dict) -> None:
 
 
 def emit_call_duration(
-    *, call_uuid: str, caller: str, duration_seconds: int | None, hangup_cause: str | None
+    *,
+    call_uuid: str,
+    caller: str,
+    duration_seconds: int | None,
+    bill_duration_seconds: int | None,
+    hangup_cause: str | None,
 ) -> dict:
     """Append one call_ended cost event. Returns the record written.
 
-    duration_seconds comes straight from Plivo's Duration hangup param --
-    not computed locally, so it matches what Plivo actually bills for.
+    duration_seconds comes from Plivo's Duration hangup parameter and is the
+    connected-call timeline. bill_duration_seconds comes from BillDuration
+    and is kept separately because provider billing increments can make it
+    differ from the conversational duration.
     """
     record = {
         "event": "call_ended",
@@ -47,13 +54,15 @@ def emit_call_duration(
         "call_uuid": call_uuid,
         "caller": caller,
         "duration_seconds": duration_seconds,
+        "bill_duration_seconds": bill_duration_seconds,
         "hangup_cause": hangup_cause,
     }
     _append(record)
     logger.info(
-        "call cost emitted call_uuid=%s duration_seconds=%s cause=%s",
+        "call cost emitted call_uuid=%s duration_seconds=%s bill_duration_seconds=%s cause=%s",
         call_uuid,
         duration_seconds,
+        bill_duration_seconds,
         hangup_cause,
     )
     return record

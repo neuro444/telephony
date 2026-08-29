@@ -284,6 +284,27 @@ def test_hangup_is_idempotent(client, monkeypatch):
     assert client.post("/voice/hangup", data=ANSWER_FORM).status_code == 200
 
 
+def test_hangup_preserves_duration_and_bill_duration(client, monkeypatch, cost_log):
+    """Timeline duration and provider-billed duration are different facts."""
+    stub_brain(monkeypatch, BASE)
+    client.post("/voice/answer", data=ANSWER_FORM)
+    payload = {
+        **ANSWER_FORM,
+        "Duration": "65",
+        "BillDuration": "66",
+        "HangupCause": "NORMAL_CLEARING",
+    }
+
+    assert client.post("/voice/hangup", data=payload).status_code == 200
+
+    records = [json.loads(line) for line in cost_log.read_text().splitlines()]
+    ended = [record for record in records if record["event"] == "call_ended"]
+    assert len(ended) == 1
+    assert ended[0]["duration_seconds"] == 65
+    assert ended[0]["bill_duration_seconds"] == 66
+    assert ended[0]["hangup_cause"] == "NORMAL_CLEARING"
+
+
 def test_fallback_dials_the_restaurant(client):
     """Reached only if /voice/answer itself is unreachable."""
     r = client.post("/voice/fallback", data=ANSWER_FORM)

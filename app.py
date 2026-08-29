@@ -290,10 +290,16 @@ async def hangup(params: dict = Depends(verify_plivo)) -> Response:
         cause=params.get("HangupCause"),
     )
     duration_raw = params.get("Duration")
+    bill_duration_raw = params.get("BillDuration")
     cost_emitter.emit_call_duration(
         call_uuid=call_uuid,
         caller=params.get("From", ""),
         duration_seconds=int(duration_raw) if duration_raw and duration_raw.isdigit() else None,
+        bill_duration_seconds=(
+            int(bill_duration_raw)
+            if bill_duration_raw and bill_duration_raw.isdigit()
+            else None
+        ),
         hangup_cause=params.get("HangupCause"),
     )
     purge(call_uuid)  # delete cached TTS mp3s for this call
