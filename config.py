@@ -68,6 +68,7 @@ PHRASE_CACHE_DIR = os.getenv("PHRASE_CACHE_DIR", "/app/phrase_cache")
 ORDERS_LOG_PATH = os.getenv("ORDERS_LOG_PATH", "/data/orders/orders.jsonl")
 COST_LOG_PATH = os.getenv("COST_LOG_PATH", "/data/cost/costs.jsonl")
 PRINT_API_URL = os.getenv("PRINT_API_URL", "")
+PRINT_API_KEY = os.getenv("PRINT_API_KEY", "")
 
 # ── Privacy ───────────────────────────
 # When True (default), phone numbers are masked before being written to
