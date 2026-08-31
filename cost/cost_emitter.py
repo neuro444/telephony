@@ -20,6 +20,7 @@ import threading
 from datetime import datetime, timezone
 
 import config
+from pii import mask_phone
 
 logger = logging.getLogger(__name__)
 _lock = threading.Lock()
@@ -45,7 +46,7 @@ def emit_call_duration(
         "event": "call_ended",
         "emitted_at": datetime.now(timezone.utc).isoformat(),
         "call_uuid": call_uuid,
-        "caller": caller,
+        "caller": mask_phone(caller),
         "duration_seconds": duration_seconds,
         "hangup_cause": hangup_cause,
     }

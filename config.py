@@ -69,6 +69,13 @@ ORDERS_LOG_PATH = os.getenv("ORDERS_LOG_PATH", "/data/orders/orders.jsonl")
 COST_LOG_PATH = os.getenv("COST_LOG_PATH", "/data/cost/costs.jsonl")
 PRINT_API_URL = os.getenv("PRINT_API_URL", "")
 
+# ── Privacy ───────────────────────────
+# When True (default), phone numbers are masked before being written to
+# on-disk JSONL log files (costs.jsonl, orders.jsonl). Set to "false" in
+# local dev or CI so unit tests can assert on exact phone-number strings
+# without a decode step. Must be "true" in any production deployment.
+MASK_PII_LOGS = os.getenv("MASK_PII_LOGS", "true").lower() in ("1", "true", "yes")
+
 # ── Copy ──────────────────────────────
 # The greeting itself is NOT configured here — chat_manager writes it, and
 # greets returning callers by name. This is only the opening message the
