@@ -8,3 +8,5 @@ orders/*.jsonl
 venv/
 .venv/
 menu_flat.json
+
+workflow/
