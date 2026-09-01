@@ -86,8 +86,18 @@ def print_order(order: dict, *, call_uuid: str, caller: str, order_type: str | N
         },
     }
 
+    headers = {}
+    if config.PRINT_API_KEY:
+        headers["Authorization"] = f"Bearer {config.PRINT_API_KEY}"
+
     try:
-        r = httpx.post(f"{config.PRINT_API_URL.rstrip('/')}/print/order", json=payload, timeout=5.0)
+        r = httpx.post(
+            f"{config.PRINT_API_URL.rstrip('/')}/print/order",
+            json=payload,
+            headers=headers,
+            timeout=5.0,
+            verify=True,  # Enforce TLS verification
+        )
         r.raise_for_status()
         logger.info("print request sent call_uuid=%s status=%s", call_uuid, r.status_code)
         return True
@@ -138,11 +148,17 @@ def print_manager_request(
             "quote_free": True,
         },
     }
+    headers = {}
+    if config.PRINT_API_KEY:
+        headers["Authorization"] = f"Bearer {config.PRINT_API_KEY}"
+
     try:
         r = httpx.post(
             f"{config.PRINT_API_URL.rstrip('/')}/print/order",
             json=payload,
+            headers=headers,
             timeout=5.0,
+            verify=True,  # Enforce TLS verification
         )
         r.raise_for_status()
         logger.info(
