@@ -95,7 +95,8 @@ def test_cost_emitter_masks_caller_when_enabled(tmp_path):
          patch.object(pii.config, "MASK_PII_LOGS", True):
         ce.emit_call_duration(
             call_uuid="uuid-1", caller="+14042071333",
-            duration_seconds=42, hangup_cause="NORMAL_CLEARING",
+            duration_seconds=42, bill_duration_seconds=42,
+            hangup_cause="NORMAL_CLEARING",
         )
     record = _read_last_record(log)
     assert record["caller"] == "+1404***1333"
@@ -111,7 +112,8 @@ def test_cost_emitter_exposes_caller_when_disabled(tmp_path):
          patch.object(pii.config, "MASK_PII_LOGS", False):
         ce.emit_call_duration(
             call_uuid="uuid-2", caller="+14042071333",
-            duration_seconds=10, hangup_cause="USER_BUSY",
+            duration_seconds=10, bill_duration_seconds=10,
+            hangup_cause="USER_BUSY",
         )
     record = _read_last_record(log)
     assert record["caller"] == "+14042071333"
