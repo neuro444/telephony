@@ -1,0 +1,109 @@
+sequenceDiagram
+    autonumber
+
+    actor Customer as 📞 User (Caller)
+    participant Plivo   as Plivo PSTN Platform
+    participant Gateway as telephony (FastAPI Gateway)
+    participant TTS     as ElevenLabs TTS
+    participant Brain   as chat_manager (Conversational Brain)
+    participant LLM     as OpenAI LLM
+    participant Printer as Epson Kitchen Printer
+    participant Staff   as voice_central (Staff Dashboard)
+
+    %% ─────────────────────────────────────────
+    %% PHASE 1 — Call Initiation
+    %% ─────────────────────────────────────────
+    note over Customer, Plivo: Phase 1 — Call Initiation
+
+    Customer  ->> Plivo:   Dials restaurant number
+    Plivo     ->> Gateway: POST /voice/answer (CallUUID, From, To)
+    note over Gateway: Verify Plivo HMAC V3 signature<br/>Register call in calls/state.py
+    Gateway   ->> Brain:   POST /chat {user_id, message: "hello", session_id: null}
+    note over Brain: Resolve returning caller by phone<br/>Assemble context (prompt → memory → menu → history)<br/>Call OpenAI LLM → return {answer, session_id}
+    Brain     ->> LLM:     Request greeting response
+    LLM      -->> Brain:   Greeting text (personalized by caller history)
+    Brain    -->> Gateway: {answer: "Hi <caller name>, I'm Divya...", session_id}
+    Gateway   ->> TTS:     Synthesize greeting text
+    TTS      -->> Gateway: greeting.mp3 (cached to audio_cache/)
+    Gateway  -->> Plivo:   XML: &lt;Play&gt; greeting.mp3 &lt;GetInput speech action="/voice/turn"/&gt;
+    Plivo    -->> Customer: 🔊 AI greeting spoken
+
+    %% ─────────────────────────────────────────
+    %% PHASE 2 — Conversation Turn Loop
+    %% ─────────────────────────────────────────
+    note over Customer, Brain: Phase 2 — Conversation Turn Loop (repeats each utterance)
+
+    loop Each Caller Utterance
+        Customer  ->> Plivo:   Speaks (e.g. "Two samosas please")
+        Plivo     ->> Gateway: POST /voice/turn {CallUUID, From, Speech="two samosas"}
+        note over Gateway: Plivo natively transcribes speech<br/>No separate STT service required
+        Gateway   ->> Brain:   POST /chat {user_id, session_id, message: "two samosas"}
+        note over Brain: Context assembly: prompt + memory + menu + history<br/>Pricing: Python calculator (never LLM math)<br/>Returns typed JSON control flags
+        Brain     ->> LLM:     Request conversational turn
+        LLM      -->> Brain:   Response text + intent
+        Brain    -->> Gateway: {answer, order_ready, call_ended, Transfer_to_Manager, To_manager, order_type, order}
+        Gateway   ->> TTS:     Synthesize reply text
+        TTS      -->> Gateway: reply.mp3
+        Gateway  -->> Plivo:   XML: &lt;Play&gt; reply.mp3 &lt;GetInput speech action="/voice/turn"/&gt;
+        Plivo    -->> Customer: 🔊 AI reply spoken
+    end
+
+    %% ─────────────────────────────────────────
+    %% PHASE 3A — Order Confirmed (order_ready: true)
+    %% ─────────────────────────────────────────
+    note over Gateway, Printer: Phase 3A — Order Confirmed (order_ready: true)
+
+    opt order_ready == true AND order present
+        Gateway   ->> Gateway: calls.mark_order_emitted() [idempotency guard]
+        Gateway   ->> Gateway: orders.emit() → orders.jsonl (PII masked)
+        Gateway   ->> Printer: print_order() via print_client.py (Auth header + TLS)
+        Printer  -->> Printer: 🖨️ Kitchen ticket printed (ESC/POS binary)
+        Gateway  -->> Plivo:   XML: &lt;Play&gt; confirmation.mp3 &lt;Hangup/&gt;
+        Plivo    -->> Customer: 🔊 Final confirmation spoken — call ends
+    end
+
+    %% ─────────────────────────────────────────
+    %% PHASE 3B — Manager/Cake/Catering Handoff (To_manager: true)
+    %% ─────────────────────────────────────────
+    note over Gateway, Printer: Phase 3B — Async Cake / Catering Lead Handoff (To_manager: true)
+
+    opt To_manager == true (cake or catering inquiry)
+        Gateway   ->> Gateway: calls.mark_handoff_emitted() [idempotency guard]
+        Gateway   ->> Gateway: orders.emit_handoff() → handoffs.jsonl
+        Gateway   ->> Printer: print_manager_request() (Auth header + TLS)
+        Printer  -->> Printer: 🖨️ Manager callback ticket printed
+        Gateway  -->> Plivo:   XML: &lt;Play&gt; handoff_reply.mp3 &lt;GetInput .../&gt;
+        Plivo    -->> Customer: 🔊 "A manager will follow up with you"
+    end
+
+    %% ─────────────────────────────────────────
+    %% PHASE 3C — Live Manager Transfer (Transfer_to_Manager: true)
+    %% ─────────────────────────────────────────
+    note over Gateway, Plivo: Phase 3C — Live Manager Transfer (Transfer_to_Manager: true)
+
+    opt Transfer_to_Manager == true
+        Gateway  -->> Plivo:   XML: &lt;Play&gt; transfer.mp3 &lt;Dial&gt; manager number &lt;/Dial&gt;
+        Plivo    -->> Customer: 🔊 "Connecting you now..." → Live call transfer
+    end
+
+    %% ─────────────────────────────────────────
+    %% PHASE 4 — Call Teardown & Cost Logging
+    %% ─────────────────────────────────────────
+    note over Customer, Gateway: Phase 4 — Call Teardown & Cost Logging
+
+    Customer  ->> Plivo:   Call ends / Customer hangs up
+    Plivo     ->> Gateway: POST /voice/hangup {CallUUID, Duration, BillDuration}
+    Gateway   ->> Gateway: calls.end() — remove call state
+    Gateway   ->> Gateway: cost_emitter.emit_call() → calls.jsonl (PII masked phone)
+    Gateway   ->> Gateway: audio_cache.purge(call_uuid) — delete per-call MP3s
+
+    %% ─────────────────────────────────────────
+    %% STAFF DASHBOARD (Concurrent / On-Demand)
+    %% ─────────────────────────────────────────
+    note over Staff, Brain: Staff Dashboard — Concurrent On-Demand Access
+
+    Staff     ->> Brain:   GET /callers, /sessions, /orders (DASHBOARD_API_KEY)
+    note over Brain: Session-ownership enforced (IDOR protection)<br/>All staff access server-side audit logged in voice_central
+    Brain    -->> Staff:   Caller history, transcripts, order records
+    Staff     ->> Gateway: GET /orders/recent, /handoffs/recent, /cost/calls (DASHBOARD_API_KEY)
+    Gateway  -->> Staff:   Live order feed, handoffs, per-call token cost records
