@@ -7,9 +7,13 @@ Every decision below follows from that one line.
 """
 import hmac
 import logging
+import secrets
+from xml.sax.saxutils import escape
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from starlette.concurrency import run_in_threadpool
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, WebSocket
 
 import config
 import phrase_cache as pc
@@ -21,6 +25,7 @@ from orders import emitter as orders
 from cost import cost_emitter
 import print_client
 from security import verify_plivo
+from speech.deepgram_stt import stream_utterance
 from speech.elevenlabs_tts import TTSUnavailable, synthesize
 
 logging.basicConfig(level=logging.INFO)
@@ -61,6 +66,8 @@ def _prewarm_fixed_phrases() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if config.STT_PROVIDER == "deepgram" and not config.DEEPGRAM_API_KEY:
+        raise RuntimeError("DEEPGRAM_API_KEY is required for Deepgram STT")
     _prewarm_fixed_phrases()
     yield
 
@@ -157,12 +164,13 @@ async def answer(params: dict = Depends(verify_plivo)) -> Response:
     """
     call_uuid = params.get("CallUUID", "")
     caller = params.get("From", "")
-    calls.start(call_uuid, caller)  # new call -> no session yet
+    state = calls.start(call_uuid, caller)
+    state.stt_provider = config.STT_PROVIDER
     purge_expired()  # sweep clips from calls that never reached /voice/hangup
     logger.info("call answered call_uuid=%s from=%s", call_uuid, caller)
 
     try:
-        reply = brain_chat(user_id=caller, session_id=None, message=config.GREETING_PROMPT)
+        reply = await run_in_threadpool(brain_chat, user_id=caller, session_id=None, message=config.GREETING_PROMPT)
     except BrainUnavailable:
         logger.exception("brain unreachable on answer call_uuid=%s", call_uuid)
         return _speak_and_transfer_response(config.BRAIN_DOWN_MSG)
@@ -173,13 +181,13 @@ async def answer(params: dict = Depends(verify_plivo)) -> Response:
 
     greeting_text = reply.get("answer", "")
     try:
-        audio_url = tts_cached(greeting_text, call_uuid)
-        return xml_response(plivo_xml.play_and_continue(audio_url))
+        audio_url = await run_in_threadpool(tts_cached, greeting_text, call_uuid)
+        return _continue_response(audio_url, call_uuid, speak=False)
     except TTSUnavailable:
         # Plivo's own <Speak> as a fallback so a TTS outage doesn't kill
         # the very first turn of every call.
         logger.exception("TTS unavailable on greeting, falling back to <Speak>")
-        return xml_response(plivo_xml.speak_and_continue(greeting_text))
+        return _continue_response(greeting_text, call_uuid, speak=True)
 
 
 @app.post("/voice/turn")
@@ -192,20 +200,21 @@ async def turn(params: dict = Depends(verify_plivo)) -> Response:
     # Caller said nothing intelligible. Re-prompt rather than dropping the call.
     if not speech:
         try:
-            audio_url = tts_cached(config.REPROMPT, call_uuid, use_phrase_cache=True)
-            return xml_response(plivo_xml.play_and_continue(audio_url))
+            audio_url = await run_in_threadpool(tts_cached, config.REPROMPT, call_uuid, use_phrase_cache=True)
+            return _continue_response(audio_url, call_uuid, speak=False)
         except TTSUnavailable:
-            return xml_response(plivo_xml.speak_and_continue(config.REPROMPT))
+            return _continue_response(config.REPROMPT, call_uuid, speak=True)
 
     state = calls.get(call_uuid)
     try:
-        reply = brain_chat(
+        reply = await run_in_threadpool(
+            brain_chat,
             user_id=caller, session_id=state.session_id, message=speech
         )
     except BrainUnavailable:
         logger.exception("brain unreachable call_uuid=%s", call_uuid)
         try:
-            audio_url = tts_cached(config.BRAIN_DOWN_MSG, call_uuid, use_phrase_cache=True)
+            audio_url = await run_in_threadpool(tts_cached, config.BRAIN_DOWN_MSG, call_uuid, use_phrase_cache=True)
             return xml_response(
                 plivo_xml.play_and_transfer(audio_url, config.PLIVO_TRANSFER_NUMBER)
             )
@@ -220,7 +229,7 @@ async def turn(params: dict = Depends(verify_plivo)) -> Response:
     # Emit before synthesizing audio: a completed order must survive a TTS
     # outage. Emitting after the tts_cached() try/except would drop exactly
     # the orders that completed successfully.
-    _emit_events(reply, call_uuid=call_uuid, caller=caller, session_id=session_id)
+    await run_in_threadpool(_emit_events, reply, call_uuid=call_uuid, caller=caller, session_id=session_id)
 
     # One llm_turn cost record per turn -- previously nothing forwarded this
     # data anywhere at all, only Plivo's own call-minute cost was tracked.
@@ -240,11 +249,11 @@ async def turn(params: dict = Depends(verify_plivo)) -> Response:
         logger.exception("failed to emit llm_turn cost record call_uuid=%s", call_uuid)
 
     try:
-        audio_url = tts_cached(reply["answer"], call_uuid)
+        audio_url = await run_in_threadpool(tts_cached, reply["answer"], call_uuid)
     except TTSUnavailable:
         logger.exception("TTS unavailable for reply, falling back to <Speak>")
         # Degrade to Plivo's own TTS rather than drop the call.
-        return _handle_flags_with_speak(reply)
+        return _handle_flags_with_speak(reply, call_uuid)
 
     # Transfer_to_Manager (live handoff) and To_manager (async cake/catering
     # follow-up) are different things — confusing them either drops a lead
@@ -257,7 +266,7 @@ async def turn(params: dict = Depends(verify_plivo)) -> Response:
     if reply.get("call_ended"):
         return xml_response(plivo_xml.play_and_hangup(audio_url))
 
-    return xml_response(plivo_xml.play_and_continue(audio_url))
+    return _continue_response(audio_url, call_uuid, speak=False)
 
 
 @app.post("/voice/no_input")
@@ -266,10 +275,10 @@ async def no_input(params: dict = Depends(verify_plivo)) -> Response:
     call_uuid = params.get("CallUUID", "")
     logger.info("no speech detected; reprompting call_uuid=%s", call_uuid)
     try:
-        audio_url = tts_cached(config.REPROMPT, call_uuid, use_phrase_cache=True)
-        return xml_response(plivo_xml.play_and_continue(audio_url))
+        audio_url = await run_in_threadpool(tts_cached, config.REPROMPT, call_uuid, use_phrase_cache=True)
+        return _continue_response(audio_url, call_uuid, speak=False)
     except TTSUnavailable:
-        return xml_response(plivo_xml.speak_and_continue(config.REPROMPT))
+        return _continue_response(config.REPROMPT, call_uuid, speak=True)
 
 
 def _emit_events(reply: dict, *, call_uuid: str, caller: str, session_id: str | None) -> None:
@@ -313,7 +322,7 @@ def _speak_and_transfer_response(text: str) -> Response:
     )
 
 
-def _handle_flags_with_speak(reply: dict) -> Response:
+def _handle_flags_with_speak(reply: dict, call_uuid: str) -> Response:
     """Same flag routing as turn(), but via Plivo's <Speak> instead of a
     cached <Play> URL — used only when ElevenLabs TTS itself is down."""
     text = reply.get("answer", "")
@@ -321,7 +330,7 @@ def _handle_flags_with_speak(reply: dict) -> Response:
         return _speak_and_transfer_response(text)
     if reply.get("call_ended"):
         return xml_response(plivo_xml.speak_and_hangup(text))
-    return xml_response(plivo_xml.speak_and_continue(text))
+    return _continue_response(text, call_uuid, speak=True)
 
 
 @app.post("/voice/transfer_done")
@@ -383,3 +392,58 @@ async def fallback(params: dict = Depends(verify_plivo)) -> Response:
         f'<Dial callerId="{config.PLIVO_PHONE_NUMBER}">'
         f"<Number>{config.PLIVO_TRANSFER_NUMBER}</Number></Dial></Response>"
     )
+
+
+def _continue_response(value: str, call_uuid: str, *, speak: bool = False) -> Response:
+    state = calls.get(call_uuid)
+    if state.stt_provider != "deepgram":
+        builder = plivo_xml.speak_and_continue if speak else plivo_xml.play_and_continue
+        return xml_response(builder(value))
+    state.stream_token = secrets.token_urlsafe(32)
+    state.stream_claimed = False
+    state.stream_transcript = ""
+    state.stream_failed = False
+    base = config.PLIVO_PUBLIC_BASE_URL.rstrip("/")
+    base = base.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+    url = f"{base}/voice/stream/{call_uuid}/{state.stream_token}"
+    tag = "Speak" if speak else "Play"
+    return xml_response(plivo_xml.stream_and_continue(f"<{tag}>{escape(value)}</{tag}>", url, state.stream_token))
+
+
+@app.websocket("/voice/stream/{call_uuid}/{token}")
+async def voice_stream(websocket: WebSocket, call_uuid: str, token: str):
+    # A short-lived, single-use capability generated only by signed call webhooks.
+    state = calls.get(call_uuid)
+    if (state.finalized or state.stt_provider != "deepgram" or state.stream_claimed
+            or not state.stream_token or not hmac.compare_digest(token, state.stream_token)):
+        await websocket.close(code=1008)
+        return
+    state.stream_claimed = True
+    await websocket.accept()
+    try:
+        state.stream_transcript = await stream_utterance(websocket, call_uuid)
+    except Exception:
+        # Do not log provider payloads, credentials, or caller transcripts.
+        logger.warning("Deepgram stream failed; transferring call to manager")
+        state.stream_failed = True
+    finally:
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass
+
+
+@app.post("/voice/stream_result/{token}")
+async def stream_result(token: str, params: dict = Depends(verify_plivo)) -> Response:
+    state = calls.get(params.get("CallUUID", ""))
+    if state.finalized:
+        return xml_response("<Response><Hangup/></Response>")
+    if not state.stream_token or not hmac.compare_digest(token, state.stream_token):
+        raise HTTPException(409, "expired stream result")
+    transcript = state.stream_transcript
+    failed = state.stream_failed or not state.stream_claimed
+    state.stream_transcript = ""
+    state.stream_token = ""
+    if failed:
+        return _speak_and_transfer_response(config.STT_DOWN_MSG)
+    return await turn({**params, "Speech": transcript})

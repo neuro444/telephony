@@ -3,3 +3,4 @@ uvicorn[standard]==0.30.6
 httpx==0.27.2
 python-multipart==0.0.9
 plivo>=4.51.0
+websockets==17.0.1

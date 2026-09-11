@@ -106,3 +106,16 @@ def play_and_transfer(audio_url: str, number: str) -> str:
 
 # transfer_failed and apology_and_hangup were byte-identical to
 # speak_and_hangup; callers use that directly.
+
+
+def stream_and_continue(prompt: str, stream_url: str, token: str) -> str:
+    """Play a prompt, stream one inbound utterance, then consume its result."""
+    result_url = config.PLIVO_PUBLIC_BASE_URL.rstrip("/") + "/voice/stream_result/" + token
+    return (
+        f"<Response>{prompt}"
+        f'<Stream audioTrack="inbound" keepCallAlive="true" '
+        f'contentType="audio/x-mulaw;rate=8000" '
+        f'streamTimeout={_attr(config.DEEPGRAM_TURN_TIMEOUT + 10)}>'
+        f"{escape(stream_url)}</Stream>"
+        f'<Redirect method="POST">{escape(result_url)}</Redirect></Response>'
+    )

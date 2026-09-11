@@ -45,10 +45,13 @@ TRANSFER_TIMEOUT = _int("TRANSFER_TIMEOUT", 25)
 # ── Speech ────────────────────────────
 # ElevenLabs voice + model. The brain's .env already names a chosen
 # Indian-accent voice (ELEVEN_VOICE) — use the same id here.
-# v1 uses Plivo's native <GetInput> speech recognition — no STT service call
-# in the turn loop. See speech/base.py if a self-hosted/managed STT ever
-# needs to be swapped in (e.g. if SpeechConfidenceScore proves too low on
-# Indian-accented menu items).
+STT_PROVIDER = os.getenv("STT_PROVIDER", "plivo").lower()
+if STT_PROVIDER not in {"plivo", "deepgram"}:
+    raise ValueError("STT_PROVIDER must be plivo or deepgram")
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
+DEEPGRAM_MODEL = os.getenv("DEEPGRAM_MODEL", "nova-3")
+DEEPGRAM_ENDPOINTING_MS = _int("DEEPGRAM_ENDPOINTING_MS", 700)
+DEEPGRAM_TURN_TIMEOUT = _int("DEEPGRAM_TURN_TIMEOUT", 30)
 SPEECH_LANGUAGE = os.getenv("SPEECH_LANGUAGE", "en-US")
 SPEECH_END_TIMEOUT = os.getenv("SPEECH_END_TIMEOUT", "auto")
 EXECUTION_TIMEOUT = _int("EXECUTION_TIMEOUT", 15)
@@ -95,4 +98,9 @@ BRAIN_DOWN_MSG = os.getenv(
 TRANSFER_FAILED_MSG = os.getenv(
     "TRANSFER_FAILED_MSG",
     "Sorry, no one is free right now. Please call back shortly.",
+)
+
+STT_DOWN_MSG = os.getenv(
+    "STT_DOWN_MSG",
+    "Sorry, we're having trouble hearing you. Connecting you to our team now.",
 )
