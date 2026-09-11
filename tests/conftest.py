@@ -12,6 +12,8 @@ os.environ.setdefault("PLIVO_PUBLIC_BASE_URL", "https://voice.test")
 os.environ.setdefault("PLIVO_PHONE_NUMBER", "+14042071333")
 os.environ.setdefault("PLIVO_TRANSFER_NUMBER", "+16468753366")
 os.environ.setdefault("PLIVO_AUTH_TOKEN", "test-auth-token")
+# Existing call-flow tests explicitly exercise the Plivo provider.
+os.environ.setdefault("STT_PROVIDER", "plivo")
 os.environ.setdefault("SPEECH_HINTS", "Samosa, Gobi Manchurian")
 
 import pytest  # noqa: E402

@@ -8,6 +8,7 @@ Not persisted: a gateway restart mid-call loses the mapping, and the next
 turn from that call would start a fresh chat_manager session. Acceptable
 for v1 — a restart mid-call is already a degraded experience regardless.
 """
+import config
 import threading
 import time
 from dataclasses import dataclass, field
@@ -31,7 +32,7 @@ class CallState:
     # Incrementing counter so each turn's cost event has a unique, orderable
     # turn_seq (1, 2, 3...) — see cost/cost_emitter.py:emit_llm_turn.
     turn_count: int = 0
-    stt_provider: str = "plivo"
+    stt_provider: str = field(default_factory=lambda: config.STT_PROVIDER)
     stream_token: str = ""
     stream_claimed: bool = False
     stream_transcript: str = ""

@@ -27,6 +27,7 @@ from cost import cost_emitter
 import print_client
 from security import verify_plivo
 from speech.deepgram_stt import stream_utterance
+from speech.sarvam_stt import stream_utterance as sarvam_stream_utterance
 from speech.elevenlabs_tts import TTSUnavailable, synthesize
 
 logging.basicConfig(level=logging.INFO)
@@ -69,6 +70,9 @@ def _prewarm_fixed_phrases() -> None:
 async def lifespan(app: FastAPI):
     if config.STT_PROVIDER == "deepgram" and not config.DEEPGRAM_API_KEY:
         raise RuntimeError("DEEPGRAM_API_KEY is required for Deepgram STT")
+    if config.STT_PROVIDER == "sarvam" and not config.SARVAM_API_KEY:
+        raise RuntimeError("SARVAM_API_KEY is required for Sarvam STT")
+    logger.info("Phone STT provider=%s", config.STT_PROVIDER)
     _prewarm_fixed_phrases()
     yield
 
@@ -397,7 +401,7 @@ async def fallback(params: dict = Depends(verify_plivo)) -> Response:
 
 def _continue_response(value: str, call_uuid: str, *, speak: bool = False) -> Response:
     state = calls.get(call_uuid)
-    if state.stt_provider != "deepgram":
+    if state.stt_provider not in {"deepgram", "sarvam"}:
         builder = plivo_xml.speak_and_continue if speak else plivo_xml.play_and_continue
         return xml_response(builder(value))
     state.stream_token = secrets.token_urlsafe(32)
@@ -408,26 +412,28 @@ def _continue_response(value: str, call_uuid: str, *, speak: bool = False) -> Re
     base = base.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
     url = f"{base}/voice/stream/{call_uuid}/{state.stream_token}"
     tag = "Speak" if speak else "Play"
-    return xml_response(plivo_xml.stream_and_continue(f"<{tag}>{escape(value)}</{tag}>", url, state.stream_token))
+    return xml_response(plivo_xml.stream_and_continue(f"<{tag}>{escape(value)}</{tag}>", url, state.stream_token,
+        timeout=config.SARVAM_TURN_TIMEOUT if state.stt_provider == "sarvam" else config.DEEPGRAM_TURN_TIMEOUT))
 
 
 @app.websocket("/voice/stream/{call_uuid}/{token}")
 async def voice_stream(websocket: WebSocket, call_uuid: str, token: str):
     # A short-lived, single-use capability generated only by signed call webhooks.
     state = calls.get(call_uuid)
-    if (state.finalized or state.stt_provider != "deepgram" or state.stream_claimed
+    if (state.finalized or state.stt_provider not in {"deepgram", "sarvam"} or state.stream_claimed
             or not state.stream_token or not hmac.compare_digest(token, state.stream_token)):
         await websocket.close(code=1008)
         return
     state.stream_claimed = True
     await websocket.accept()
     try:
-        state.stream_transcript = await stream_utterance(websocket, call_uuid)
+        adapter = sarvam_stream_utterance if state.stt_provider == "sarvam" else stream_utterance
+        state.stream_transcript = await adapter(websocket, call_uuid)
     except Exception as exc:
         # Log diagnostic types/status only, never provider payloads or credentials.
         response = getattr(exc, "response", None)
-        logger.warning("Deepgram stream failed error=%s http_status=%s; transferring call to manager",
-                       type(exc).__name__, getattr(response, "status_code", None))
+        logger.warning("STT stream failed provider=%s error=%s http_status=%s; transferring call to manager",
+                       state.stt_provider, type(exc).__name__, getattr(response, "status_code", None))
         state.stream_failed = True
     finally:
         try:
@@ -449,7 +455,7 @@ async def stream_result(token: str, params: dict = Depends(verify_plivo)) -> Res
     state.stream_token = ""
     if failed:
         logger.warning("STT turn failed stage=%s",
-                       "deepgram_stream" if state.stream_claimed else "plivo_stream_never_connected")
+                       state.stt_provider + "_stream" if state.stream_claimed else "plivo_stream_never_connected")
         return _speak_and_transfer_response(config.STT_DOWN_MSG)
     return await turn({**params, "Speech": transcript})
 
@@ -459,7 +465,7 @@ async def stream_status(params: dict = Depends(verify_plivo)) -> Response:
     """Observe Plivo stream lifecycle without changing turn state on late callbacks."""
     reason = params.get("StatusReason", params.get("Error", ""))
     reason = re.sub(r"(?:https?|wss?)://\S+", "[url]", reason)
-    for secret in (config.DEEPGRAM_API_KEY, config.PLIVO_AUTH_TOKEN):
+    for secret in (config.DEEPGRAM_API_KEY, config.SARVAM_API_KEY, config.PLIVO_AUTH_TOKEN):
         if secret:
             reason = reason.replace(secret, "[redacted]")
     logger.info("Plivo stream status event=%r reason=%r",

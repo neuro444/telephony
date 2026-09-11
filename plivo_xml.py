@@ -29,7 +29,7 @@ def _get_input(prompt_xml: str) -> str:
     no_input_url = f"{config.PLIVO_PUBLIC_BASE_URL.rstrip('/')}/voice/no_input"
     return (
         f"<GetInput action={_attr(action_url)} method=\"POST\" "
-        f'inputType="speech" speechModel="phone_call" '
+        f'inputType="speech" speechModel={_attr(config.PLIVO_SPEECH_MODEL)} '
         f"language={_attr(config.SPEECH_LANGUAGE)} "
         f"executionTimeout={_attr(config.EXECUTION_TIMEOUT)} "
         f"speechEndTimeout={_attr(config.SPEECH_END_TIMEOUT)} "
@@ -108,7 +108,7 @@ def play_and_transfer(audio_url: str, number: str) -> str:
 # speak_and_hangup; callers use that directly.
 
 
-def stream_and_continue(prompt: str, stream_url: str, token: str) -> str:
+def stream_and_continue(prompt: str, stream_url: str, token: str, *, timeout: int | None = None) -> str:
     """Play a prompt, stream one inbound utterance, then consume its result."""
     result_url = config.PLIVO_PUBLIC_BASE_URL.rstrip("/") + "/voice/stream_result/" + token
     status_url = config.PLIVO_PUBLIC_BASE_URL.rstrip("/") + "/voice/stream_status"
@@ -117,7 +117,7 @@ def stream_and_continue(prompt: str, stream_url: str, token: str) -> str:
         f'<Stream bidirectional="true" audioTrack="inbound" keepCallAlive="true" '
         f'contentType="audio/x-mulaw;rate=8000" '
         f'statusCallbackUrl={_attr(status_url)} statusCallbackMethod="POST" '
-        f'streamTimeout={_attr(config.DEEPGRAM_TURN_TIMEOUT + 10)}>'
+        f'streamTimeout={_attr((config.DEEPGRAM_TURN_TIMEOUT if timeout is None else timeout) + 10)}>'
         f"{escape(stream_url)}</Stream>"
         f'<Redirect method="POST">{escape(result_url)}</Redirect></Response>'
     )
