@@ -45,9 +45,9 @@ TRANSFER_TIMEOUT = _int("TRANSFER_TIMEOUT", 25)
 # ── Speech ────────────────────────────
 # ElevenLabs voice + model. The brain's .env already names a chosen
 # Indian-accent voice (ELEVEN_VOICE) — use the same id here.
-STT_PROVIDER = os.getenv("STT_PROVIDER", "deepgram").lower()
-if STT_PROVIDER not in {"plivo", "deepgram", "sarvam", "elevenlabs"}:
-    raise ValueError("STT_PROVIDER must be plivo, deepgram, sarvam, or elevenlabs")
+STT_PROVIDER = os.getenv("STT_PROVIDER", "assemblyai").lower()
+if STT_PROVIDER not in {"plivo", "deepgram", "sarvam", "elevenlabs", "assemblyai"}:
+    raise ValueError("STT_PROVIDER must be plivo, deepgram, sarvam, elevenlabs, or assemblyai")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 DEEPGRAM_MODEL = os.getenv("DEEPGRAM_MODEL", "nova-3")
 DEEPGRAM_ENDPOINTING_MS = _int("DEEPGRAM_ENDPOINTING_MS", 700)
@@ -113,3 +113,10 @@ STT_DOWN_MSG = os.getenv(
     "STT_DOWN_MSG",
     "Sorry, we're having trouble hearing you. Connecting you to our team now.",
 )
+
+# AssemblyAI streaming. Accept the standard SDK key name as an alias.
+ASSEMBLY_API_KEY = os.getenv("ASSEMBLY_API_KEY", "") or os.getenv("ASSEMBLYAI_API_KEY", "")
+ASSEMBLY_MODEL = os.getenv("ASSEMBLY_MODEL", "universal-streaming-english")
+ASSEMBLY_TURN_TIMEOUT = _int("ASSEMBLY_TURN_TIMEOUT", 30)
+if ASSEMBLY_MODEL not in {"universal-streaming-english", "universal-streaming-multilingual", "universal-3-5-pro"}:
+    raise ValueError("Unsupported ASSEMBLY_MODEL")

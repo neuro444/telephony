@@ -26,6 +26,7 @@ from orders import emitter as orders
 from cost import cost_emitter
 import print_client
 from security import verify_plivo
+from speech.assemblyai_stt import stream_utterance as assemblyai_stream_utterance
 from speech.deepgram_stt import stream_utterance
 from speech.sarvam_stt import stream_utterance as sarvam_stream_utterance
 from speech.elevenlabs_stt import stream_utterance as elevenlabs_stream_utterance
@@ -75,7 +76,9 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("SARVAM_API_KEY is required for Sarvam STT")
     if config.STT_PROVIDER == "elevenlabs" and not config.ELEVENLABS_API_KEY:
         raise RuntimeError("ELEVENLABS_API_KEY is required for ElevenLabs STT")
-    logger.info("Phone STT provider=%s", config.STT_PROVIDER)
+    if config.STT_PROVIDER == "assemblyai" and not config.ASSEMBLY_API_KEY:
+        raise RuntimeError("ASSEMBLY_API_KEY is required for AssemblyAI STT")
+    logger.info("Phone STT provider=%s assembly_model=%s", config.STT_PROVIDER, config.ASSEMBLY_MODEL)
     _prewarm_fixed_phrases()
     yield
 
@@ -404,7 +407,7 @@ async def fallback(params: dict = Depends(verify_plivo)) -> Response:
 
 def _continue_response(value: str, call_uuid: str, *, speak: bool = False) -> Response:
     state = calls.get(call_uuid)
-    if state.stt_provider not in {"deepgram", "sarvam", "elevenlabs"}:
+    if state.stt_provider not in {"deepgram", "sarvam", "elevenlabs", "assemblyai"}:
         builder = plivo_xml.speak_and_continue if speak else plivo_xml.play_and_continue
         return xml_response(builder(value))
     state.stream_token = secrets.token_urlsafe(32)
@@ -416,6 +419,7 @@ def _continue_response(value: str, call_uuid: str, *, speak: bool = False) -> Re
     url = f"{base}/voice/stream/{call_uuid}/{state.stream_token}"
     tag = "Speak" if speak else "Play"
     timeout = {
+        "assemblyai": config.ASSEMBLY_TURN_TIMEOUT,
         "sarvam": config.SARVAM_TURN_TIMEOUT,
         "elevenlabs": config.ELEVENLABS_STT_TURN_TIMEOUT,
     }.get(state.stt_provider, config.DEEPGRAM_TURN_TIMEOUT)
@@ -427,7 +431,7 @@ def _continue_response(value: str, call_uuid: str, *, speak: bool = False) -> Re
 async def voice_stream(websocket: WebSocket, call_uuid: str, token: str):
     # A short-lived, single-use capability generated only by signed call webhooks.
     state = calls.get(call_uuid)
-    if (state.finalized or state.stt_provider not in {"deepgram", "sarvam", "elevenlabs"} or state.stream_claimed
+    if (state.finalized or state.stt_provider not in {"deepgram", "sarvam", "elevenlabs", "assemblyai"} or state.stream_claimed
             or not state.stream_token or not hmac.compare_digest(token, state.stream_token)):
         await websocket.close(code=1008)
         return
@@ -435,6 +439,7 @@ async def voice_stream(websocket: WebSocket, call_uuid: str, token: str):
     await websocket.accept()
     try:
         adapter = {
+            "assemblyai": assemblyai_stream_utterance,
             "sarvam": sarvam_stream_utterance,
             "elevenlabs": elevenlabs_stream_utterance,
         }.get(state.stt_provider, stream_utterance)
@@ -475,7 +480,7 @@ async def stream_status(params: dict = Depends(verify_plivo)) -> Response:
     """Observe Plivo stream lifecycle without changing turn state on late callbacks."""
     reason = params.get("StatusReason", params.get("Error", ""))
     reason = re.sub(r"(?:https?|wss?)://\S+", "[url]", reason)
-    for secret in (config.DEEPGRAM_API_KEY, config.SARVAM_API_KEY, config.PLIVO_AUTH_TOKEN):
+    for secret in (config.DEEPGRAM_API_KEY, config.SARVAM_API_KEY, config.ASSEMBLY_API_KEY, config.PLIVO_AUTH_TOKEN):
         if secret:
             reason = reason.replace(secret, "[redacted]")
     logger.info("Plivo stream status event=%r reason=%r",

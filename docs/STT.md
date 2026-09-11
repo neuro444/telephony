@@ -3,6 +3,7 @@
 Run in the telephony checkout on the machine you want to configure:
 
 ```sh
+./stt assemblyai      # default: universal-streaming-english
 ./stt                 # show .env provider, model, key presence (never the key)
 ./stt sarvam          # Saaras v3
 ./stt deepgram        # Nova-3
@@ -25,11 +26,12 @@ docker compose up -d --force-recreate gateway
 ```
 
 Recreating a gateway interrupts active calls; do this between calls. `.env` is
-not committed, so set the key on the server separately. Sarvam is the default when STT_PROVIDER is unset, and is selected locally.
-An existing server .env overrides the default; run ./stt sarvam to switch it.
+not committed, so set the key on the server separately. AssemblyAI is the default when STT_PROVIDER is unset, and is selected locally.
+An existing server .env overrides the default; run ./stt assemblyai to switch it.
 
 | Provider | Selection | Model setting | Credential |
 | --- | --- | --- | --- |
+| AssemblyAI direct streaming | `STT_PROVIDER=assemblyai` | `ASSEMBLY_MODEL=universal-streaming-english` | `ASSEMBLY_API_KEY` (or `ASSEMBLYAI_API_KEY`) |
 | Deepgram direct streaming | `STT_PROVIDER=deepgram` | `DEEPGRAM_MODEL=nova-3` | `DEEPGRAM_API_KEY` |
 | Sarvam direct streaming | `STT_PROVIDER=sarvam` | `SARVAM_MODEL=saaras:v3` | `SARVAM_API_KEY` |
 | Plivo built-in GetInput | `STT_PROVIDER=plivo` | `PLIVO_SPEECH_MODEL=phone_call` | Existing Plivo credentials |
@@ -89,3 +91,52 @@ References:
 - https://www.plivo.com/docs/voice/xml/input
 - https://www.plivo.com/docs/aiagent/aistudio/agentconfiguration/stt
 - https://www.plivo.com/docs/voice-agents/audio-streaming/xml/stream
+
+## AssemblyAI models and live validation
+
+```sh
+./stt assemblyai --model universal-streaming-english
+./stt assemblyai --model universal-streaming-multilingual
+./stt assemblyai --model universal-3-5-pro
+```
+
+The production adapter (`speech/assemblyai_stt.py`) connects to the v3 socket
+with `speech_model`, `encoding=pcm_mulaw`, and `sample_rate=8000`. It aggregates
+Plivo's 20 ms packets into 100 ms messages without resampling. It waits for
+Begin and then a Turn with end_of_turn=true, ignores partials, and explicitly
+sends Terminate and drains the acknowledgement before closing. No legacy
+format_turns/confidence parameters are sent, including for Universal-3.5 Pro.
+Failures transfer to the manager without switching to Plivo STT.
+
+All three models were tested live locally through this adapter using synthetic
+Plivo-format audio, not just a handshake. English and multilingual returned
+"hello i would like two samosas please"; Pro returned
+"Hello, I would like 2 samosas please." This confirms the wire format and
+credentials work locally, not real-call/menu accuracy on a server.
+
+`tests/fixtures/stt_smoke.wav` is synthetic speech generated locally with macOS
+speech synthesis, converted to mono PCM16 at 8 kHz; it contains no caller audio.
+Repeat the live test (billed provider session; key required):
+
+```sh
+python scripts/smoke_assemblyai.py
+python scripts/smoke_assemblyai.py --model universal-3-5-pro
+```
+
+Before replacing a server container, build and test the new image against the
+server's key, then select and start it:
+
+```sh
+docker compose build gateway
+docker compose run --rm --no-deps gateway python scripts/smoke_assemblyai.py
+./stt assemblyai --model universal-streaming-english
+docker compose up -d --no-build gateway
+```
+
+Startup logs show provider and model. AssemblyAI logs session readiness,
+termination acknowledgement, and whether a transcript was produced, without
+logging caller transcripts or API keys. A real call still needs validation.
+
+Sources:
+- https://www.assemblyai.com/docs/streaming/api-spec/streaming-websocket
+- https://www.assemblyai.com/docs/streaming/migration-guides/universal-to-universal-3-5-pro-streaming

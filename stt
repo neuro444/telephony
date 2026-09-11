@@ -6,7 +6,9 @@ from pathlib import Path
 import re
 import tempfile
 
+ASSEMBLY_MODELS = ('universal-streaming-english', 'universal-streaming-multilingual', 'universal-3-5-pro')
 PRESETS = {
+    'assemblyai': ('ASSEMBLY_MODEL', ASSEMBLY_MODELS[0], 'ASSEMBLY_API_KEY'),
     'deepgram': ('DEEPGRAM_MODEL', 'nova-3', 'DEEPGRAM_API_KEY'),
     'sarvam': ('SARVAM_MODEL', 'saaras:v3', 'SARVAM_API_KEY'),
     'elevenlabs': ('ELEVENLABS_STT_MODEL', 'scribe_v2_realtime', 'ELEVENLABS_API_KEY'),
@@ -17,7 +19,10 @@ PRESETS = {
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('provider', choices=['show', *PRESETS], nargs='?', default='show')
+    parser.add_argument('--model', choices=ASSEMBLY_MODELS, help='AssemblyAI streaming model')
     args = parser.parse_args()
+    if args.model and args.provider != 'assemblyai':
+        parser.error('--model is available with ./stt assemblyai')
     path = Path(__file__).resolve().parent / '.env'
     source = path.read_text() if path.exists() else ''
     values = {}
@@ -25,7 +30,9 @@ def main():
         match = re.match(r'^\s*(?:export\s+)?([A-Z_]+)\s*=\s*(.*)$', line)
         if match:
             values[match[1]] = match[2].strip().strip('\"\'')
-    selected = values.get('STT_PROVIDER', 'sarvam') if args.provider == 'show' else args.provider
+    if not values.get('ASSEMBLY_API_KEY') and values.get('ASSEMBLYAI_API_KEY'):
+        values['ASSEMBLY_API_KEY'] = values['ASSEMBLYAI_API_KEY']
+    selected = values.get('STT_PROVIDER', 'assemblyai') if args.provider == 'show' else args.provider
     if selected not in PRESETS:
         parser.error('Invalid STT_PROVIDER in .env')
     model_key, default_model, key_name = PRESETS[selected]
@@ -33,7 +40,9 @@ def main():
         if key_name and (not values.get(key_name) or values[key_name] in {'YOUR_SARVAM_API_KEY', 'your-existing-key'}):
             parser.error(f'Add {key_name} to {path} before selecting {selected}')
         changes = {'STT_PROVIDER': selected}
-        if not values.get(model_key):
+        if args.model:
+            changes[model_key] = args.model
+        elif not values.get(model_key):
             changes[model_key] = default_model
         for key, value in changes.items():
             pattern = r'^\s*(?:export\s+)?' + key + r'\s*=.*$'
@@ -51,6 +60,8 @@ def main():
         finally:
             if os.path.exists(temp):
                 os.unlink(temp)
+    if args.provider != 'show':
+        values.update(changes)
     print(f'Phone STT: {selected} | Model: {values.get(model_key) or default_model}')
     print('API key: ' + ('not required for built-in STT' if not key_name else 'SET' if values.get(key_name) else 'MISSING'))
     print('Configuration file:', path)
@@ -58,7 +69,7 @@ def main():
         print('Apply on this server: docker compose up -d --force-recreate gateway')
         print('If code changed too: docker compose up -d --build gateway')
     else:
-        print('Switch: ./stt deepgram | ./stt sarvam | ./stt elevenlabs | ./stt plivo')
+        print('Switch: ./stt assemblyai [--model MODEL] | ./stt deepgram | ./stt sarvam | ./stt elevenlabs | ./stt plivo')
     print('Shows .env selection; running containers retain their settings until recreated.')
 
 
