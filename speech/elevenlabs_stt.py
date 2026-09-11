@@ -7,20 +7,23 @@ requires PCM.
 import asyncio
 import base64
 import json
+from urllib.parse import urlencode
 
 from websockets.asyncio.client import connect
 import config
 
-CONNECTION_URL = (
-    "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
-    "?model_id=scribe_v2_realtime&audio_format=ulaw_8000&commit_strategy=vad"
-)
+
+def connection_url() -> str:
+    return "wss://api.elevenlabs.io/v1/speech-to-text/realtime?" + urlencode({
+        "model_id": "scribe_v2_realtime", "audio_format": "ulaw_8000",
+        "commit_strategy": "vad", "language_code": config.ELEVENLABS_STT_LANGUAGE,
+    })
 
 
 async def stream_utterance(plivo, call_uuid: str) -> str:
     if not config.ELEVENLABS_API_KEY:
         raise RuntimeError("ELEVENLABS_API_KEY is required")
-    async with connect(CONNECTION_URL,
+    async with connect(connection_url(),
                        additional_headers={"xi-api-key": config.ELEVENLABS_API_KEY},
                        open_timeout=10, close_timeout=2, max_size=1024 * 1024) as scribe:
         async def forward():

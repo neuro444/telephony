@@ -57,6 +57,7 @@ SARVAM_MODEL = os.getenv("SARVAM_MODEL", "saaras:v3")
 SARVAM_LANGUAGE = os.getenv("SARVAM_LANGUAGE", "en-IN")
 SARVAM_TURN_TIMEOUT = _int("SARVAM_TURN_TIMEOUT", 30)
 ELEVENLABS_STT_TURN_TIMEOUT = _int("ELEVENLABS_STT_TURN_TIMEOUT", 30)
+ELEVENLABS_STT_LANGUAGE = os.getenv("ELEVENLABS_STT_LANGUAGE", "en")
 PLIVO_SPEECH_MODEL = os.getenv("PLIVO_SPEECH_MODEL", "phone_call")
 if PLIVO_SPEECH_MODEL not in {"phone_call", "default", "command_and_search"}:
     raise ValueError("Unsupported PLIVO_SPEECH_MODEL")
