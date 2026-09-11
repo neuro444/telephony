@@ -445,10 +445,11 @@ async def voice_stream(websocket: WebSocket, call_uuid: str, token: str):
         }.get(state.stt_provider, stream_utterance)
         state.stream_transcript = await adapter(websocket, call_uuid)
     except Exception as exc:
-        # Log diagnostic types/status only, never provider payloads or credentials.
+        # Full traceback for debugging — but never log provider payloads or
+        # credentials, which is why we don't str(exc) or log exc.args directly.
         response = getattr(exc, "response", None)
-        logger.warning("STT stream failed provider=%s error=%s http_status=%s; transferring call to manager",
-                       state.stt_provider, type(exc).__name__, getattr(response, "status_code", None))
+        logger.exception("STT stream failed provider=%s error=%s http_status=%s; transferring call to manager",
+                          state.stt_provider, type(exc).__name__, getattr(response, "status_code", None))
         state.stream_failed = True
     finally:
         try:
