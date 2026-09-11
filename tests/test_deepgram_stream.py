@@ -22,6 +22,9 @@ def test_stream_turn_preserves_session_and_returns_to_listening(client, monkeypa
     assert tags(response.text) == ['Play', 'Stream', 'Redirect']
     stream = parseString(response.text).getElementsByTagName('Stream')[0]
     assert stream.getAttribute('contentType') == 'audio/x-mulaw;rate=8000'
+    assert stream.getAttribute('bidirectional') == 'true'
+    assert stream.getAttribute('keepCallAlive') == 'true'
+    assert stream.getAttribute('statusCallbackUrl').endswith('/voice/stream_status')
     path = urlsplit(stream.firstChild.data).path
 
     async def transcribe(ws, call_uuid):
@@ -144,3 +147,22 @@ def test_stream_result_requires_plivo_signature():
     from fastapi.testclient import TestClient
     client = TestClient(gateway.app, raise_server_exceptions=False)
     assert client.post('/voice/stream_result/fake', data=ANSWER_FORM).status_code == 403
+
+
+def test_stream_status_logs_failure_without_mutating_turn(client, caplog):
+    import logging
+    state = calls.start("cu1", ANSWER_FORM["From"])
+    state.stream_token = "current-turn"
+    with caplog.at_level(logging.INFO):
+        response = client.post('/voice/stream_status', data={**ANSWER_FORM,
+            "Event": "failed", "StatusReason": "Connection failed wss://example.test/private-token"})
+    assert response.status_code == 200
+    assert "Connection failed" in caplog.text
+    assert "private-token" not in caplog.text
+    assert state.stream_token == "current-turn"
+    assert not state.stream_failed
+
+
+def test_stream_status_requires_signature():
+    from fastapi.testclient import TestClient
+    assert TestClient(gateway.app).post('/voice/stream_status', data={}).status_code == 403

@@ -75,3 +75,16 @@ No live phone call or deployment was performed during implementation.
 - [Plivo audio events](https://www.plivo.com/docs/voice-agents/audio-streaming/concepts/audio-streaming-reference)
 - [Deepgram streaming API](https://developers.deepgram.com/reference/speech-to-text/listen-streaming)
 - [Deepgram endpointing and final results](https://developers.deepgram.com/docs/understand-endpointing-interim-results)
+
+## Stream-start troubleshooting
+
+The stream now explicitly sets `bidirectional="true"` with
+`keepCallAlive="true"`, matching Plivo's voice-agent examples, while forwarding
+only inbound audio to Deepgram. The original XML omitted `bidirectional` and
+Plivo call logs showed Stream completing in 3 ms without a created stream;
+the mode change still requires confirmation on a real call.
+
+Signed `/voice/stream_status` callbacks log Plivo's event and failure reason.
+Gateway errors also distinguish `plivo_stream_never_connected` from an error
+after the WebSocket was accepted; Deepgram handshake failures include HTTP
+status and exception type without response bodies or secrets.

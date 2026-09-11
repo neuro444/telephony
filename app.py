@@ -8,6 +8,7 @@ Every decision below follows from that one line.
 import hmac
 import logging
 import secrets
+import re
 from xml.sax.saxutils import escape
 from contextlib import asynccontextmanager
 
@@ -422,9 +423,11 @@ async def voice_stream(websocket: WebSocket, call_uuid: str, token: str):
     await websocket.accept()
     try:
         state.stream_transcript = await stream_utterance(websocket, call_uuid)
-    except Exception:
-        # Do not log provider payloads, credentials, or caller transcripts.
-        logger.warning("Deepgram stream failed; transferring call to manager")
+    except Exception as exc:
+        # Log diagnostic types/status only, never provider payloads or credentials.
+        response = getattr(exc, "response", None)
+        logger.warning("Deepgram stream failed error=%s http_status=%s; transferring call to manager",
+                       type(exc).__name__, getattr(response, "status_code", None))
         state.stream_failed = True
     finally:
         try:
@@ -445,5 +448,20 @@ async def stream_result(token: str, params: dict = Depends(verify_plivo)) -> Res
     state.stream_transcript = ""
     state.stream_token = ""
     if failed:
+        logger.warning("STT turn failed stage=%s",
+                       "deepgram_stream" if state.stream_claimed else "plivo_stream_never_connected")
         return _speak_and_transfer_response(config.STT_DOWN_MSG)
     return await turn({**params, "Speech": transcript})
+
+
+@app.post("/voice/stream_status")
+async def stream_status(params: dict = Depends(verify_plivo)) -> Response:
+    """Observe Plivo stream lifecycle without changing turn state on late callbacks."""
+    reason = params.get("StatusReason", params.get("Error", ""))
+    reason = re.sub(r"(?:https?|wss?)://\S+", "[url]", reason)
+    for secret in (config.DEEPGRAM_API_KEY, config.PLIVO_AUTH_TOKEN):
+        if secret:
+            reason = reason.replace(secret, "[redacted]")
+    logger.info("Plivo stream status event=%r reason=%r",
+                params.get("Event", "")[:80], reason[:300])
+    return Response(status_code=200)
