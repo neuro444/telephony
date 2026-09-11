@@ -13,7 +13,7 @@ import config
 
 CONNECTION_URL = (
     "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
-    "?model_id=scribe_v2_realtime&audio_format=ulaw_8000"
+    "?model_id=scribe_v2_realtime&audio_format=ulaw_8000&commit_strategy=vad"
 )
 
 
