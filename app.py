@@ -28,6 +28,7 @@ import print_client
 from security import verify_plivo
 from speech.deepgram_stt import stream_utterance
 from speech.sarvam_stt import stream_utterance as sarvam_stream_utterance
+from speech.elevenlabs_stt import stream_utterance as elevenlabs_stream_utterance
 from speech.elevenlabs_tts import TTSUnavailable, synthesize
 
 logging.basicConfig(level=logging.INFO)
@@ -72,6 +73,8 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("DEEPGRAM_API_KEY is required for Deepgram STT")
     if config.STT_PROVIDER == "sarvam" and not config.SARVAM_API_KEY:
         raise RuntimeError("SARVAM_API_KEY is required for Sarvam STT")
+    if config.STT_PROVIDER == "elevenlabs" and not config.ELEVENLABS_API_KEY:
+        raise RuntimeError("ELEVENLABS_API_KEY is required for ElevenLabs STT")
     logger.info("Phone STT provider=%s", config.STT_PROVIDER)
     _prewarm_fixed_phrases()
     yield
@@ -401,7 +404,7 @@ async def fallback(params: dict = Depends(verify_plivo)) -> Response:
 
 def _continue_response(value: str, call_uuid: str, *, speak: bool = False) -> Response:
     state = calls.get(call_uuid)
-    if state.stt_provider not in {"deepgram", "sarvam"}:
+    if state.stt_provider not in {"deepgram", "sarvam", "elevenlabs"}:
         builder = plivo_xml.speak_and_continue if speak else plivo_xml.play_and_continue
         return xml_response(builder(value))
     state.stream_token = secrets.token_urlsafe(32)
@@ -412,22 +415,29 @@ def _continue_response(value: str, call_uuid: str, *, speak: bool = False) -> Re
     base = base.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
     url = f"{base}/voice/stream/{call_uuid}/{state.stream_token}"
     tag = "Speak" if speak else "Play"
+    timeout = {
+        "sarvam": config.SARVAM_TURN_TIMEOUT,
+        "elevenlabs": config.ELEVENLABS_STT_TURN_TIMEOUT,
+    }.get(state.stt_provider, config.DEEPGRAM_TURN_TIMEOUT)
     return xml_response(plivo_xml.stream_and_continue(f"<{tag}>{escape(value)}</{tag}>", url, state.stream_token,
-        timeout=config.SARVAM_TURN_TIMEOUT if state.stt_provider == "sarvam" else config.DEEPGRAM_TURN_TIMEOUT))
+        timeout=timeout))
 
 
 @app.websocket("/voice/stream/{call_uuid}/{token}")
 async def voice_stream(websocket: WebSocket, call_uuid: str, token: str):
     # A short-lived, single-use capability generated only by signed call webhooks.
     state = calls.get(call_uuid)
-    if (state.finalized or state.stt_provider not in {"deepgram", "sarvam"} or state.stream_claimed
+    if (state.finalized or state.stt_provider not in {"deepgram", "sarvam", "elevenlabs"} or state.stream_claimed
             or not state.stream_token or not hmac.compare_digest(token, state.stream_token)):
         await websocket.close(code=1008)
         return
     state.stream_claimed = True
     await websocket.accept()
     try:
-        adapter = sarvam_stream_utterance if state.stt_provider == "sarvam" else stream_utterance
+        adapter = {
+            "sarvam": sarvam_stream_utterance,
+            "elevenlabs": elevenlabs_stream_utterance,
+        }.get(state.stt_provider, stream_utterance)
         state.stream_transcript = await adapter(websocket, call_uuid)
     except Exception as exc:
         # Log diagnostic types/status only, never provider payloads or credentials.

@@ -45,9 +45,9 @@ TRANSFER_TIMEOUT = _int("TRANSFER_TIMEOUT", 25)
 # ── Speech ────────────────────────────
 # ElevenLabs voice + model. The brain's .env already names a chosen
 # Indian-accent voice (ELEVEN_VOICE) — use the same id here.
-STT_PROVIDER = os.getenv("STT_PROVIDER", "sarvam").lower()
-if STT_PROVIDER not in {"plivo", "deepgram", "sarvam"}:
-    raise ValueError("STT_PROVIDER must be plivo, deepgram, or sarvam")
+STT_PROVIDER = os.getenv("STT_PROVIDER", "elevenlabs").lower()
+if STT_PROVIDER not in {"plivo", "deepgram", "sarvam", "elevenlabs"}:
+    raise ValueError("STT_PROVIDER must be plivo, deepgram, sarvam, or elevenlabs")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 DEEPGRAM_MODEL = os.getenv("DEEPGRAM_MODEL", "nova-3")
 DEEPGRAM_ENDPOINTING_MS = _int("DEEPGRAM_ENDPOINTING_MS", 700)
@@ -56,6 +56,7 @@ SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
 SARVAM_MODEL = os.getenv("SARVAM_MODEL", "saaras:v3")
 SARVAM_LANGUAGE = os.getenv("SARVAM_LANGUAGE", "en-IN")
 SARVAM_TURN_TIMEOUT = _int("SARVAM_TURN_TIMEOUT", 30)
+ELEVENLABS_STT_TURN_TIMEOUT = _int("ELEVENLABS_STT_TURN_TIMEOUT", 30)
 PLIVO_SPEECH_MODEL = os.getenv("PLIVO_SPEECH_MODEL", "phone_call")
 if PLIVO_SPEECH_MODEL not in {"phone_call", "default", "command_and_search"}:
     raise ValueError("Unsupported PLIVO_SPEECH_MODEL")

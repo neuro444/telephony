@@ -9,6 +9,7 @@ import tempfile
 PRESETS = {
     'deepgram': ('DEEPGRAM_MODEL', 'nova-3', 'DEEPGRAM_API_KEY'),
     'sarvam': ('SARVAM_MODEL', 'saaras:v3', 'SARVAM_API_KEY'),
+    'elevenlabs': ('ELEVENLABS_STT_MODEL', 'scribe_v2_realtime', 'ELEVENLABS_API_KEY'),
     'plivo': ('PLIVO_SPEECH_MODEL', 'phone_call', None),
 }
 
@@ -57,7 +58,7 @@ def main():
         print('Apply on this server: docker compose up -d --force-recreate gateway')
         print('If code changed too: docker compose up -d --build gateway')
     else:
-        print('Switch: ./stt deepgram | ./stt sarvam | ./stt plivo')
+        print('Switch: ./stt deepgram | ./stt sarvam | ./stt elevenlabs | ./stt plivo')
     print('Shows .env selection; running containers retain their settings until recreated.')
 
 
