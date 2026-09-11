@@ -45,7 +45,7 @@ TRANSFER_TIMEOUT = _int("TRANSFER_TIMEOUT", 25)
 # ── Speech ────────────────────────────
 # ElevenLabs voice + model. The brain's .env already names a chosen
 # Indian-accent voice (ELEVEN_VOICE) — use the same id here.
-STT_PROVIDER = os.getenv("STT_PROVIDER", "elevenlabs").lower()
+STT_PROVIDER = os.getenv("STT_PROVIDER", "deepgram").lower()
 if STT_PROVIDER not in {"plivo", "deepgram", "sarvam", "elevenlabs"}:
     raise ValueError("STT_PROVIDER must be plivo, deepgram, sarvam, or elevenlabs")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
