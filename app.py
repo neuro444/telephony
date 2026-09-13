@@ -18,14 +18,16 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, 
 
 import config
 import phrase_cache as pc
-import plivo_xml
+import voice_xml
 from audio_cache import purge, purge_expired, read as read_audio, write as write_audio
 from brain.client import BrainUnavailable, chat as brain_chat
 from calls import state as calls
 from orders import emitter as orders
 from cost import cost_emitter
 import print_client
-from security import verify_plivo
+from security import verify_voice, verify_twilio_socket
+from telephony_stream import TwilioStream
+from customer_audio import CaptureStream
 from speech.assemblyai_stt import stream_utterance as assemblyai_stream_utterance
 from speech.deepgram_stt import stream_utterance
 from speech.sarvam_stt import stream_utterance as sarvam_stream_utterance
@@ -70,6 +72,14 @@ def _prewarm_fixed_phrases() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if config.TELEPHONY_PROVIDER == "twilio":
+        if config.STT_PROVIDER == "plivo":
+            raise RuntimeError("Plivo built-in STT requires TELEPHONY_PROVIDER=plivo; retain external STT for Twilio")
+        if not all((config.TWILIO_ACCOUNT_SID, config.TWILIO_AUTH_TOKEN, config.TWILIO_PHONE_NUMBER)):
+            raise RuntimeError("Twilio account SID, auth token and phone number are required")
+        if not config.TWILIO_PUBLIC_BASE_URL.startswith("https://"):
+            raise RuntimeError("TWILIO_PUBLIC_BASE_URL must be the public HTTPS gateway URL")
+    logger.info("Telephone carrier=%s", config.TELEPHONY_PROVIDER)
     if config.STT_PROVIDER == "deepgram" and not config.DEEPGRAM_API_KEY:
         raise RuntimeError("DEEPGRAM_API_KEY is required for Deepgram STT")
     if config.STT_PROVIDER == "sarvam" and not config.SARVAM_API_KEY:
@@ -83,7 +93,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Plivo Telephony Gateway", lifespan=lifespan)
+app = FastAPI(title="Telephony Gateway", lifespan=lifespan)
 
 
 def require_dashboard_api_key(
@@ -164,8 +174,9 @@ async def get_phrase_audio(key: str) -> Response:
     return Response(content=data, media_type="audio/mpeg")
 
 
+@app.post("/twilio/voice/answer")
 @app.post("/voice/answer")
-async def answer(params: dict = Depends(verify_plivo)) -> Response:
+async def answer(params: dict = Depends(verify_voice)) -> Response:
     """Plivo hits this when a call connects.
 
     The greeting is NOT hardcoded here. chat_manager writes it — it greets
@@ -201,8 +212,9 @@ async def answer(params: dict = Depends(verify_plivo)) -> Response:
         return _continue_response(greeting_text, call_uuid, speak=True)
 
 
+@app.post("/twilio/voice/turn")
 @app.post("/voice/turn")
-async def turn(params: dict = Depends(verify_plivo)) -> Response:
+async def turn(params: dict = Depends(verify_voice)) -> Response:
     """One caller utterance -> one agent reply."""
     call_uuid = params.get("CallUUID", "")
     caller = params.get("From", "")
@@ -217,21 +229,24 @@ async def turn(params: dict = Depends(verify_plivo)) -> Response:
             return _continue_response(config.REPROMPT, call_uuid, speak=True)
 
     state = calls.get(call_uuid)
+    customer_audio = state.customer_audio
+    state.customer_audio = None
     try:
         reply = await run_in_threadpool(
             brain_chat,
-            user_id=caller, session_id=state.session_id, message=speech
+            user_id=caller, session_id=state.session_id, message=speech,
+            **({"customer_audio": customer_audio} if customer_audio else {})
         )
     except BrainUnavailable:
         logger.exception("brain unreachable call_uuid=%s", call_uuid)
         try:
             audio_url = await run_in_threadpool(tts_cached, config.BRAIN_DOWN_MSG, call_uuid, use_phrase_cache=True)
             return xml_response(
-                plivo_xml.play_and_transfer(audio_url, config.PLIVO_TRANSFER_NUMBER)
+                voice_xml.play_and_transfer(audio_url, config.transfer_number())
             )
         except TTSUnavailable:
             # Both the brain AND TTS are down — never leave a dead line.
-            return xml_response(plivo_xml.speak_and_hangup(config.BRAIN_DOWN_MSG))
+            return xml_response(voice_xml.speak_and_hangup(config.BRAIN_DOWN_MSG))
 
     session_id = reply.get("session_id")
     if session_id:
@@ -271,17 +286,18 @@ async def turn(params: dict = Depends(verify_plivo)) -> Response:
     # or hangs up on a customer.
     if reply.get("Transfer_to_Manager"):
         return xml_response(
-            plivo_xml.play_and_transfer(audio_url, config.PLIVO_TRANSFER_NUMBER)
+            voice_xml.play_and_transfer(audio_url, config.transfer_number())
         )
 
     if reply.get("call_ended"):
-        return xml_response(plivo_xml.play_and_hangup(audio_url))
+        return xml_response(voice_xml.play_and_hangup(audio_url))
 
     return _continue_response(audio_url, call_uuid, speak=False)
 
 
+@app.post("/twilio/voice/no_input")
 @app.post("/voice/no_input")
-async def no_input(params: dict = Depends(verify_plivo)) -> Response:
+async def no_input(params: dict = Depends(verify_voice)) -> Response:
     """Reprompt instead of ending the call when GetInput recognizes no speech."""
     call_uuid = params.get("CallUUID", "")
     logger.info("no speech detected; reprompting call_uuid=%s", call_uuid)
@@ -329,7 +345,7 @@ def _emit_events(reply: dict, *, call_uuid: str, caller: str, session_id: str | 
 def _speak_and_transfer_response(text: str) -> Response:
     """Spoken apology then a live transfer — used when TTS is unavailable."""
     return xml_response(
-        plivo_xml.speak_and_transfer(text, config.PLIVO_TRANSFER_NUMBER)
+        voice_xml.speak_and_transfer(text, config.transfer_number())
     )
 
 
@@ -340,12 +356,13 @@ def _handle_flags_with_speak(reply: dict, call_uuid: str) -> Response:
     if reply.get("Transfer_to_Manager"):
         return _speak_and_transfer_response(text)
     if reply.get("call_ended"):
-        return xml_response(plivo_xml.speak_and_hangup(text))
+        return xml_response(voice_xml.speak_and_hangup(text))
     return _continue_response(text, call_uuid, speak=True)
 
 
+@app.post("/twilio/voice/transfer_done")
 @app.post("/voice/transfer_done")
-async def transfer_done(params: dict = Depends(verify_plivo)) -> Response:
+async def transfer_done(params: dict = Depends(verify_voice)) -> Response:
     """<Dial> posts here when the manager leg ends. Without this, a manager
     who is busy or away leaves the caller listening to nothing."""
     status = params.get("DialStatus", "")  # completed|no-answer|busy|failed
@@ -358,14 +375,17 @@ async def transfer_done(params: dict = Depends(verify_plivo)) -> Response:
         params.get("DialHangupCause"),
         params.get("CallUUID"),
     )
-    return xml_response(plivo_xml.speak_and_hangup(config.TRANSFER_FAILED_MSG))
+    return xml_response(voice_xml.speak_and_hangup(config.TRANSFER_FAILED_MSG))
 
 
+@app.post("/twilio/voice/hangup")
 @app.post("/voice/hangup")
-async def hangup(params: dict = Depends(verify_plivo)) -> Response:
+async def hangup(params: dict = Depends(verify_voice)) -> Response:
     """Configured as the app's Hangup URL. Fires whenever the call ends,
     however it ends. Idempotency key is CallUUID (Plivo's own guidance) —
     callbacks can be delivered more than once."""
+    if config.current_carrier() == "twilio" and params.get("CallStatus") not in {"completed", "busy", "failed", "no-answer", "canceled"}:
+        return Response(status_code=200)
     call_uuid = params.get("CallUUID", "")
     if calls.already_finalized(call_uuid):
         return Response(status_code=200)
@@ -391,59 +411,65 @@ async def hangup(params: dict = Depends(verify_plivo)) -> Response:
     return Response(status_code=200)
 
 
+@app.post("/twilio/voice/fallback")
 @app.post("/voice/fallback")
-async def fallback(params: dict = Depends(verify_plivo)) -> Response:
+async def fallback(params: dict = Depends(verify_voice)) -> Response:
     """Configured as the app's Fallback Answer URL — reached only if
     /voice/answer itself is unreachable (gateway down, DNS issue, etc).
     Never a dead line: apologize and dial the restaurant directly."""
     del params
-    return xml_response(
-        f"<Response><Speak>We're having trouble taking your call online. "
-        f"Connecting you now.</Speak>"
-        f'<Dial callerId="{config.PLIVO_PHONE_NUMBER}">'
-        f"<Number>{config.PLIVO_TRANSFER_NUMBER}</Number></Dial></Response>"
+    return _speak_and_transfer_response(
+        "We're having trouble taking your call online. Connecting you now."
     )
 
 
 def _continue_response(value: str, call_uuid: str, *, speak: bool = False) -> Response:
     state = calls.get(call_uuid)
     if state.stt_provider not in {"deepgram", "sarvam", "elevenlabs", "assemblyai"}:
-        builder = plivo_xml.speak_and_continue if speak else plivo_xml.play_and_continue
+        builder = voice_xml.speak_and_continue if speak else voice_xml.play_and_continue
         return xml_response(builder(value))
     state.stream_token = secrets.token_urlsafe(32)
     state.stream_claimed = False
     state.stream_transcript = ""
     state.stream_failed = False
-    base = config.PLIVO_PUBLIC_BASE_URL.rstrip("/")
+    state.customer_audio = None
+    base = config.public_base_url()
     base = base.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
-    url = f"{base}/voice/stream/{call_uuid}/{state.stream_token}"
-    tag = "Speak" if speak else "Play"
+    prefix = "/twilio" if config.current_carrier() == "twilio" else ""
+    url = f"{base}{prefix}/voice/stream/{call_uuid}/{state.stream_token}"
+    tag = ("Say" if config.current_carrier() == "twilio" else "Speak") if speak else "Play"
     timeout = {
         "assemblyai": config.ASSEMBLY_TURN_TIMEOUT,
         "sarvam": config.SARVAM_TURN_TIMEOUT,
         "elevenlabs": config.ELEVENLABS_STT_TURN_TIMEOUT,
     }.get(state.stt_provider, config.DEEPGRAM_TURN_TIMEOUT)
-    return xml_response(plivo_xml.stream_and_continue(f"<{tag}>{escape(value)}</{tag}>", url, state.stream_token,
+    return xml_response(voice_xml.stream_and_continue(f"<{tag}>{escape(value)}</{tag}>", url, state.stream_token,
         timeout=timeout))
 
 
+@app.websocket("/twilio/voice/stream/{call_uuid}/{token}")
 @app.websocket("/voice/stream/{call_uuid}/{token}")
 async def voice_stream(websocket: WebSocket, call_uuid: str, token: str):
     # A short-lived, single-use capability generated only by signed call webhooks.
     state = calls.get(call_uuid)
+    config.set_carrier(state.telephony_provider)
     if (state.finalized or state.stt_provider not in {"deepgram", "sarvam", "elevenlabs", "assemblyai"} or state.stream_claimed
             or not state.stream_token or not hmac.compare_digest(token, state.stream_token)):
         await websocket.close(code=1008)
         return
+    if config.current_carrier() == "twilio" and not verify_twilio_socket(websocket):
+        await websocket.close(code=1008)
+        return
     state.stream_claimed = True
     await websocket.accept()
+    capture = CaptureStream(TwilioStream(websocket) if config.current_carrier() == "twilio" else websocket, state)
     try:
         adapter = {
             "assemblyai": assemblyai_stream_utterance,
             "sarvam": sarvam_stream_utterance,
             "elevenlabs": elevenlabs_stream_utterance,
         }.get(state.stt_provider, stream_utterance)
-        state.stream_transcript = await adapter(websocket, call_uuid)
+        state.stream_transcript = await adapter(capture, call_uuid)
     except Exception as exc:
         # Full traceback for debugging — but never log provider payloads or
         # credentials, which is why we don't str(exc) or log exc.args directly.
@@ -452,14 +478,16 @@ async def voice_stream(websocket: WebSocket, call_uuid: str, token: str):
                           state.stt_provider, type(exc).__name__, getattr(response, "status_code", None))
         state.stream_failed = True
     finally:
+        state.customer_audio = capture.result(state.stream_failed)
         try:
             await websocket.close()
         except RuntimeError:
             pass
 
 
+@app.post("/twilio/voice/stream_result/{token}")
 @app.post("/voice/stream_result/{token}")
-async def stream_result(token: str, params: dict = Depends(verify_plivo)) -> Response:
+async def stream_result(token: str, params: dict = Depends(verify_voice)) -> Response:
     state = calls.get(params.get("CallUUID", ""))
     if state.finalized:
         return xml_response("<Response><Hangup/></Response>")
@@ -470,20 +498,22 @@ async def stream_result(token: str, params: dict = Depends(verify_plivo)) -> Res
     state.stream_transcript = ""
     state.stream_token = ""
     if failed:
+        state.customer_audio = None
         logger.warning("STT turn failed stage=%s",
-                       state.stt_provider + "_stream" if state.stream_claimed else "plivo_stream_never_connected")
+                       state.stt_provider + "_stream" if state.stream_claimed else config.current_carrier() + "_stream_never_connected")
         return _speak_and_transfer_response(config.STT_DOWN_MSG)
     return await turn({**params, "Speech": transcript})
 
 
+@app.post("/twilio/voice/stream_status")
 @app.post("/voice/stream_status")
-async def stream_status(params: dict = Depends(verify_plivo)) -> Response:
+async def stream_status(params: dict = Depends(verify_voice)) -> Response:
     """Observe Plivo stream lifecycle without changing turn state on late callbacks."""
     reason = params.get("StatusReason", params.get("Error", ""))
     reason = re.sub(r"(?:https?|wss?)://\S+", "[url]", reason)
-    for secret in (config.DEEPGRAM_API_KEY, config.SARVAM_API_KEY, config.ASSEMBLY_API_KEY, config.PLIVO_AUTH_TOKEN):
+    for secret in (config.DEEPGRAM_API_KEY, config.SARVAM_API_KEY, config.ASSEMBLY_API_KEY, config.PLIVO_AUTH_TOKEN, config.TWILIO_AUTH_TOKEN):
         if secret:
             reason = reason.replace(secret, "[redacted]")
-    logger.info("Plivo stream status event=%r reason=%r",
+    logger.info("%s stream status event=%r reason=%r", config.current_carrier(),
                 params.get("Event", "")[:80], reason[:300])
     return Response(status_code=200)

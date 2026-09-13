@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "scripts"))
 
-from generate_hints import build_hints, extract_names  # noqa: E402
+from generate_hints import build_hints, extract_names, prioritize_names, PRIORITY_NAMES  # noqa: E402
 
 REAL_SHAPE = {
     "restaurant_name": "Cake World, Alpharetta",
@@ -60,7 +60,27 @@ def test_accepts_a_flat_list_of_objects(tmp_path):
 
 def test_hints_are_comma_separated(tmp_path):
     hints = build_hints(extract_names(write(tmp_path, REAL_SHAPE)))
-    assert hints == "Samosa, Gobi Kondattam"
+    assert hints == "Gobi Kondattam, Samosa"
+
+
+def test_regional_terms_survive_cap_and_no_dishes_are_invented():
+    names = [f"Sandwich {i}" for i in range(120)] + ["Kallappam", "Porotta", "Beef Kizhi Porotta", "Kizhi Porotta"]
+    ordered = prioritize_names(names)
+    assert ordered[:4] == ["Kizhi Porotta", "Beef Kizhi Porotta", "Porotta", "Kallappam"]
+    assert set(ordered) == set(names)
+    assert len(ordered) == len(names)
+
+
+def test_all_current_priority_dishes_survive_deepgram_cap():
+    from pathlib import Path
+    menu = Path(__file__).resolve().parents[2] / 'chat_manager_repo/menu/menu_flat.json'
+    if not menu.exists():
+        pytest.skip('Sibling menu checkout unavailable')
+    names = extract_names(str(menu))
+    ordered = build_hints(names).split(', ')
+    assert len(ordered) == 100
+    assert set(ordered) <= set(names)
+    assert set(PRIORITY_NAMES) <= set(ordered[:100])
 
 
 def test_respects_plivos_documented_limits():

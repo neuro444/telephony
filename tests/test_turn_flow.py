@@ -25,7 +25,7 @@ def client(monkeypatch, orders_log, tmp_path):
     async def _no_verify(request: Request):
         return {k: v for k, v in (await request.form()).multi_items()}
 
-    gateway.app.dependency_overrides[security.verify_plivo] = _no_verify
+    gateway.app.dependency_overrides[security.verify_voice] = _no_verify
     monkeypatch.setattr(gateway, "synthesize", lambda text: b"FAKEMP3")
     yield TestClient(gateway.app)
     gateway.app.dependency_overrides.clear()

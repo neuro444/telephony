@@ -1,8 +1,8 @@
 """The ONLY place in this repo that talks to chat_manager.
 
-chat_manager is text-in / text-out and knows nothing about audio or Plivo.
-This module is the single seam — if the gateway ever needs a menu price,
-or chat_manager ever needs a Plivo call UUID, the boundary has leaked.
+The conversation contract remains text-in / text-out. Optional customer audio
+is diagnostic evidence attached to the corresponding user message; it is not
+sent to the language model.
 """
 import logging
 
@@ -21,7 +21,7 @@ class BrainUnavailable(RuntimeError):
     """
 
 
-def chat(user_id: str, session_id: str | None, message: str) -> dict:
+def chat(user_id: str, session_id: str | None, message: str, customer_audio: dict | None = None) -> dict:
     """Call chat_manager /chat. Returns its JSON verbatim.
 
     Deliberately NOT modeled as a typed schema: chat_manager passes new
@@ -37,7 +37,8 @@ def chat(user_id: str, session_id: str | None, message: str) -> dict:
     try:
         r = httpx.post(
             f"{config.CHAT_MANAGER_URL}/chat",
-            json={"user_id": user_id, "session_id": session_id, "message": message},
+            json={"user_id": user_id, "session_id": session_id, "message": message,
+                  **({"customer_audio": customer_audio} if customer_audio else {})},
             headers=headers,
             timeout=config.BRAIN_TIMEOUT,
         )

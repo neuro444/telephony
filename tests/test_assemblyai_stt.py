@@ -18,6 +18,7 @@ from test_turn_flow import client, stub_brain, BASE, ANSWER_FORM, tags
 @pytest.mark.parametrize('model', adapter.MODELS)
 def test_model_parameters(monkeypatch, model):
     monkeypatch.setattr(config, 'ASSEMBLY_MODEL', model)
+    monkeypatch.setattr(config, 'SPEECH_HINTS', '')
     params = parse_qs(urlsplit(adapter.connection_url()).query)
     assert params == {'speech_model': [model], 'sample_rate': ['8000'], 'encoding': ['pcm_mulaw']}
 
@@ -99,3 +100,9 @@ def test_toggle_selects_model_and_hides_key(tmp_path, model):
     assert 'ASSEMBLY_MODEL='+model in env.read_text()
     assert 'secret-test' not in result.stdout+result.stderr
     assert model in result.stdout
+
+
+def test_keyterms_are_json_array(monkeypatch):
+    monkeypatch.setattr(config, 'SPEECH_HINTS', 'Kizhi Porotta, Beef Kizhi Porotta')
+    params = parse_qs(urlsplit(adapter.connection_url()).query)
+    assert json.loads(params['keyterms_prompt'][0]) == ['Kizhi Porotta', 'Beef Kizhi Porotta']

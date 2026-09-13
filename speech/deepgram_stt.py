@@ -8,17 +8,22 @@ from websockets.asyncio.client import connect
 
 import config
 
+# Deepgram's keyterm prompting (nova-3 only) accepts at most 100 terms per
+# request; sending more causes Deepgram to reject or ignore the parameter.
+DEEPGRAM_MAX_KEYTERMS = 100
+
 
 async def stream_utterance(plivo, call_uuid: str) -> str:
     if not config.DEEPGRAM_API_KEY:
         raise RuntimeError("Deepgram is not configured")
+    keyterms = [hint.strip() for hint in config.SPEECH_HINTS.split(",") if hint.strip()]
     params = {
         "model": config.DEEPGRAM_MODEL,
         "language": config.SPEECH_LANGUAGE,
         "encoding": "mulaw", "sample_rate": 8000, "channels": 1,
         "interim_results": "true", "smart_format": "true",
         "endpointing": config.DEEPGRAM_ENDPOINTING_MS,
-        "keyterm": [hint.strip() for hint in config.SPEECH_HINTS.split(",") if hint.strip()],
+        "keyterm": keyterms[:DEEPGRAM_MAX_KEYTERMS],
     }
     parts = []
     async with connect(

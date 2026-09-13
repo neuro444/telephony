@@ -19,10 +19,61 @@ menu_items. Falls back to more generic shapes (a flat list, or a dict of
 category -> [items]) for any other menu file.
 """
 import json
+import re
 import sys
 
-MAX_PHRASES = 500
+# Shared list deliberately capped at 100, matching the current Deepgram adapter.
+MAX_PHRASES = 100
 MAX_CHARS = 10_000
+
+# Canonical menu spellings, ordered by the observed recognition problem first.
+# Only names actually present in the supplied menu are included. Do not boost
+# corrupt transcripts such as "TV per rota", or invent unavailable dishes.
+PRIORITY_NAMES = [
+    "Kizhi Porotta", "Beef Kizhi Porotta", "Porotta", "Chicken Egg Kothu Porotta",
+    "Kallappam", "Malabar Chicken Biriyani", "Malabar Goat Biriyani",
+    "Malabar Fish Biriyani", "Kizhi Biriyani", "Paragon Chicken Biriyani (Kaima Rice)",
+    "Beef Perattu", "Beef Ullarthu", "Kerala Beef Fry", "Beef Roast",
+    "Fish Pollichathu", "Kethal Chicken Fry", "Karivepila Chicken",
+    "Gobi Kondattam", "Chicken Kondattam", "Kandari Chicken Fry",
+    "Kandari Chicken Masala", "Kandari Tawa Fish", "Kandari Paneer",
+    "Chicken Mappas", "Fish Mappas", "Fish Moilee", "Achayan's Fish Curry (King Fish)",
+    "Alleppy Shrimp Curry", "Malabar Chicken Curry", "Goat Malabar Curry",
+    "Malabar Veg Kuruma", "Kerala Black Chana Curry", "Egg Roast", "Shrimp Roast",
+    "Chicken Pepper Roast", "Goat Pepper Roast", "Beef Pepper Masala",
+    "Beef Chettinadu Curry", "Chicken Chettinad Fry", "Goat Chettinad Fry",
+    "Chettinad Veg Curry", "Chettinad Chicken Biriyani", "Chettinad Goat Biriyani",
+    "Thattu Dosa with Egg Omlette", "Tattu Dosa (2 piece)",
+    "Idly (3) with Sambar and Chutney", "Ghee Roast", "Podi Dosa",
+    "Bengaluru Ghee Podi Dosa", "Onion Rawa Dosa", "Dilkush", "Coconut Bun",
+]
+
+
+def prioritize_names(names: list[str]) -> list[str]:
+    """Put Kerala/nearby regional vocabulary ahead of generic English items.
+
+    This is recognition priority, not a claim that every dish originates in
+    Kerala. Keep the complete menu and stable order within each later tier.
+    """
+    ranks = {name.casefold(): index for index, name in enumerate(PRIORITY_NAMES)}
+    regional = re.compile(
+        r'kizhi|porotta|kothu|kallappam|malabar|kerala|kondattam|kandari|'
+        r'karivepila|pollichathu|kethal|mappas|moilee|achayan|alleppy|perattu|ullarthu|'
+        r'chettinad|biriyani|dosa|idly|sambar|kuruma|dilkush', re.I)
+    indian = re.compile(
+        r'samosa|gobi|paneer|mirchi|pakoda|chole|bhature|dal|channa|'
+        r'vada|pav|dabeli|bhaji|puri|chaat|tikki|pappadi|bhel|kachori|'
+        r'naan|kulfi|chai|lassi', re.I)
+    def rank(name):
+        key = name.casefold()
+        if key in ranks:
+            return (0, ranks[key])
+        if regional.search(name):
+            return (1, 0)
+        if indian.search(name):
+            return (2, 0)
+        return (3, 0)
+    return sorted(_dedupe(names), key=rank)
 
 
 def extract_names(menu_path: str, debug: bool = False) -> list[str]:
@@ -102,7 +153,7 @@ def _dedupe(names: list[str]) -> list[str]:
 
 
 def build_hints(names: list[str]) -> str:
-    hints = names[:MAX_PHRASES]
+    hints = prioritize_names(names)[:MAX_PHRASES]
     joined = ", ".join(hints)
     while len(joined) > MAX_CHARS and hints:
         hints.pop()

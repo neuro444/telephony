@@ -33,10 +33,12 @@ class CallState:
     # turn_seq (1, 2, 3...) — see cost/cost_emitter.py:emit_llm_turn.
     turn_count: int = 0
     stt_provider: str = field(default_factory=lambda: config.STT_PROVIDER)
+    telephony_provider: str = field(default_factory=config.current_carrier)
     stream_token: str = ""
     stream_claimed: bool = False
     stream_transcript: str = ""
     stream_failed: bool = False
+    customer_audio: dict | None = None
 
 
 class _CallRegistry:

@@ -15,9 +15,13 @@ def connection_url():
     if config.ASSEMBLY_MODEL not in MODELS:
         raise ValueError('Unsupported AssemblyAI streaming model')
     # No format_turns or legacy confidence parameters: Pro doesn't use them.
-    return 'wss://streaming.assemblyai.com/v3/ws?' + urlencode({
+    params = {
         'speech_model': config.ASSEMBLY_MODEL, 'sample_rate': 8000, 'encoding': 'pcm_mulaw',
-    })
+    }
+    # Streaming keyterms must be a JSON-encoded array (up to 100 terms).
+    if config.SPEECH_HINTS.strip():
+        params['keyterms_prompt'] = json.dumps([term.strip() for term in config.SPEECH_HINTS.split(',') if term.strip()][:100])
+    return 'wss://streaming.assemblyai.com/v3/ws?' + urlencode(params)
 
 
 async def stream_utterance(plivo, call_uuid: str) -> str:

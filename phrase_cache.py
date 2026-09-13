@@ -45,7 +45,7 @@ def _path(key: str) -> str:
 
 
 def _public_url(key: str) -> str:
-    return f"{config.PLIVO_PUBLIC_BASE_URL.rstrip('/')}/phrase/{key}.mp3"
+    return f"{config.public_base_url()}/phrase/{key}.mp3"
 
 
 def get(text: str) -> str | None:

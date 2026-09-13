@@ -4,6 +4,7 @@ chat_manager's config.py convention so moving between the two repos costs
 no re-orientation.
 """
 import os
+from contextvars import ContextVar
 
 
 def _int(name: str, default: int) -> int:
@@ -21,6 +22,36 @@ def _float(name: str, default: float) -> float:
 
 
 # ── Plivo ─────────────────────────────
+TELEPHONY_PROVIDER = os.getenv("TELEPHONY_PROVIDER", "plivo").lower()
+if TELEPHONY_PROVIDER not in {"twilio", "plivo"}:
+    raise ValueError("TELEPHONY_PROVIDER must be twilio or plivo")
+_carrier_context: ContextVar[str | None] = ContextVar("telephone_carrier", default=None)
+
+
+def current_carrier() -> str:
+    return _carrier_context.get() or TELEPHONY_PROVIDER
+
+
+def set_carrier(provider: str) -> None:
+    _carrier_context.set(provider)
+
+
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
+TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER", "")
+TWILIO_PUBLIC_BASE_URL = os.getenv("TWILIO_PUBLIC_BASE_URL", "")
+TWILIO_TRANSFER_NUMBER = os.getenv("TWILIO_TRANSFER_NUMBER", "")
+
+
+def public_base_url() -> str:
+    return (TWILIO_PUBLIC_BASE_URL if current_carrier() == "twilio" else PLIVO_PUBLIC_BASE_URL).rstrip("/")
+
+
+def transfer_number() -> str:
+    # Preserve the existing manager destination when changing carriers.
+    return (TWILIO_TRANSFER_NUMBER or PLIVO_TRANSFER_NUMBER) if current_carrier() == "twilio" else PLIVO_TRANSFER_NUMBER
+
+
 PLIVO_AUTH_ID = os.getenv("PLIVO_AUTH_ID", "")
 PLIVO_AUTH_TOKEN = os.getenv("PLIVO_AUTH_TOKEN", "")  # signs webhooks
 PLIVO_PHONE_NUMBER = os.getenv("PLIVO_PHONE_NUMBER", "")  # caller ID on transfer
@@ -45,7 +76,7 @@ TRANSFER_TIMEOUT = _int("TRANSFER_TIMEOUT", 25)
 # ── Speech ────────────────────────────
 # ElevenLabs voice + model. The brain's .env already names a chosen
 # Indian-accent voice (ELEVEN_VOICE) — use the same id here.
-STT_PROVIDER = os.getenv("STT_PROVIDER", "assemblyai").lower()
+STT_PROVIDER = os.getenv("STT_PROVIDER", "deepgram").lower()
 if STT_PROVIDER not in {"plivo", "deepgram", "sarvam", "elevenlabs", "assemblyai"}:
     raise ValueError("STT_PROVIDER must be plivo, deepgram, sarvam, elevenlabs, or assemblyai")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
@@ -68,6 +99,10 @@ SPEECH_HINTS = os.getenv("SPEECH_HINTS", "")  # generated from menu/menu_flat.js
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
+
+# Customer audio debug capture: opt in; optional comma-separated E.164 test callers.
+DEBUG_CUSTOMER_AUDIO = os.getenv("DEBUG_CUSTOMER_AUDIO", "false").lower() in {"true", "1", "yes"}
+DEBUG_AUDIO_CALLERS = {x.strip() for x in os.getenv("DEBUG_AUDIO_CALLERS", "").split(",") if x.strip()}
 
 # ── Audio cache ───────────────────────
 AUDIO_DIR = os.getenv("AUDIO_DIR", "/data/audio")

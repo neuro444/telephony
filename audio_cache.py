@@ -26,7 +26,7 @@ def write(audio_bytes: bytes, call_uuid: str) -> str:
     audio_id = f"{call_uuid}-{uuid.uuid4().hex[:8]}"
     with open(_path(audio_id), "wb") as fh:
         fh.write(audio_bytes)
-    return f"{config.PLIVO_PUBLIC_BASE_URL.rstrip('/')}/audio/{audio_id}.mp3"
+    return f"{config.public_base_url()}/audio/{audio_id}.mp3"
 
 
 def read(audio_id: str) -> bytes | None:
