@@ -50,12 +50,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--gateway-container', default='plivo-gateway')
     parser.add_argument('--chat-container', default='chat-manager-api')
-    parser.add_argument('--callers', help='Comma-separated E.164 test callers')
+    parser.add_argument('--callers', default='', help='Optional caller restriction; default records all numbers')
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error('Run with sudo python3')
-    callers = args.callers or input('Test caller number(s), comma-separated E.164: ').strip()
-    if not callers or not all(re.fullmatch(r'\+[1-9][0-9]{7,14}', x.strip()) for x in callers.split(',')):
+    callers = args.callers.strip()
+    if callers and not all(re.fullmatch(r'\+[1-9][0-9]{7,14}', x.strip()) for x in callers.split(',')):
         parser.error('Provide valid test caller numbers, e.g. +15551234567')
     callers = ','.join(x.strip() for x in callers.split(','))
     raw = base64.b64decode(PAYLOAD)
@@ -132,8 +132,8 @@ def main():
                 raise RuntimeError(name + ' unexpectedly changed; rolling back')
         if new_env.get('DEBUG_CUSTOMER_AUDIO') != 'true' or new_env.get('DEBUG_AUDIO_CALLERS') != callers:
             raise RuntimeError('Compose overrides prevented audio enablement')
-        print('SUCCESS. Audio enabled for designated test callers. Backup:', backup)
-        print('Open a NEW call in Chat Manager; customer messages now include Load audio.')
+        print('SUCCESS. Audio enabled for ' + ('selected callers' if callers else 'all caller numbers') + '. Backup:', backup)
+        print('Open a NEW call in Chat Manager; customer messages now include an automatically loaded audio player.')
     except Exception:
         for path, saved, existed in reversed(original):
             if existed:

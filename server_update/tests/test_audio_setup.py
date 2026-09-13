@@ -16,8 +16,9 @@ def load():
     return module
 
 
+@pytest.mark.parametrize('callers', ['', '+15551234567'])
 @pytest.mark.parametrize('fail_build', [False, True])
-def test_setup_preserves_settings_and_rolls_back(tmp_path, monkeypatch, fail_build):
+def test_setup_preserves_settings_and_rolls_back(tmp_path, monkeypatch, fail_build, callers):
     m = load()
     infos = {}
     for key, name, service in [('chat','chat-manager-api','api'), ('gateway','plivo-gateway','gateway')]:
@@ -35,6 +36,7 @@ def test_setup_preserves_settings_and_rolls_back(tmp_path, monkeypatch, fail_bui
     monkeypatch.setattr(m.os, 'geteuid', lambda: 0)
     original_path = m.Path
     monkeypatch.setattr(m, 'Path', lambda value: tmp_path/'backups' if value=='/var/backups/customer-audio' else original_path(value))
+    monkeypatch.setattr('builtins.input', lambda *args: pytest.fail('Default setup must not prompt for numbers'))
     commands = []
     def run(args, **kwargs):
         commands.append(args)
@@ -47,10 +49,10 @@ def test_setup_preserves_settings_and_rolls_back(tmp_path, monkeypatch, fail_bui
         if 'build' in args and fail_build:
             raise RuntimeError('build failed')
         if 'up' in args and 'project-gateway' in args and not fail_build:
-            infos['plivo-gateway']['Config']['Env'] += ['DEBUG_CUSTOMER_AUDIO=true','DEBUG_AUDIO_CALLERS=+15551234567']
+            infos['plivo-gateway']['Config']['Env'] += ['DEBUG_CUSTOMER_AUDIO=true','DEBUG_AUDIO_CALLERS='+callers]
         return SimpleNamespace(stdout='')
     monkeypatch.setattr(m, 'run', run)
-    monkeypatch.setattr('sys.argv', ['setup', '--callers', '+15551234567'])
+    monkeypatch.setattr('sys.argv', ['setup'] + (['--callers', callers] if callers else []))
     if fail_build:
         with pytest.raises(RuntimeError, match='build failed'):
             m.main()
@@ -63,6 +65,7 @@ def test_setup_preserves_settings_and_rolls_back(tmp_path, monkeypatch, fail_bui
         env = (tmp_path/'gateway/.env').read_text()
         assert 'STT_PROVIDER=deepgram' in env and 'KEEP=unchanged' in env
         assert 'DEBUG_CUSTOMER_AUDIO=true' in env
+        assert ('DEBUG_AUDIO_CALLERS='+callers+'\n') in env
         assert (tmp_path/'chat/customer_audio.py').exists()
     assert list((tmp_path/'backups').glob('*/manifest.json'))
 
