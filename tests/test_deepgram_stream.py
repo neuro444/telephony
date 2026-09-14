@@ -81,6 +81,8 @@ def test_stream_connection_failure_before_start_transfers(client, monkeypatch):
 
 def test_live_audio_forwarding_and_final_segments(monkeypatch):
     monkeypatch.setattr(config, 'DEEPGRAM_API_KEY', 'test-key')
+    monkeypatch.setattr(config, 'DEEPGRAM_LANGUAGE', 'multi')
+    monkeypatch.setattr(config, 'SPEECH_LANGUAGE', 'en-US')
     sent = []
     options = {}
 
@@ -123,6 +125,8 @@ def test_live_audio_forwarding_and_final_segments(monkeypatch):
 
     monkeypatch.setattr(deepgram_stt, 'connect', connect)
     assert asyncio.run(deepgram_stt.stream_utterance(Plivo(), 'cu1')) == 'two samosas'
+    from urllib.parse import parse_qs, urlsplit
+    assert parse_qs(urlsplit(options['url']).query)['language'] == ['multi']
     assert sent == [b'audio']
     assert 'model=nova-3' in options['url']
     assert 'encoding=mulaw' in options['url']

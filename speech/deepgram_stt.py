@@ -31,7 +31,7 @@ async def stream_utterance(plivo, call_uuid: str) -> str:
     keyterms = [hint.strip() for hint in config.SPEECH_HINTS.split(",") if hint.strip()]
     params = {
         "model": config.DEEPGRAM_MODEL,
-        "language": config.SPEECH_LANGUAGE,
+        "language": config.DEEPGRAM_LANGUAGE,
         "encoding": "mulaw", "sample_rate": 8000, "channels": 1,
         "interim_results": "true", "smart_format": "true",
         "endpointing": config.DEEPGRAM_ENDPOINTING_MS,
