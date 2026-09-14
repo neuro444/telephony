@@ -5,12 +5,16 @@ Plivo's own "stop" event."""
 import asyncio
 import base64
 import csv
+import logging
 import struct
 from pathlib import Path
 
 import httpx
+from starlette.websockets import WebSocketDisconnect
 
 import config
+
+logger = logging.getLogger('gateway')
 
 MENU_CSV = Path(__file__).resolve().parent.parent / 'menu' / 'menu.csv'
 # Rough safeguard: the endpoint's tokenizer isn't available here to measure
@@ -57,18 +61,27 @@ async def stream_utterance(plivo, call_uuid: str) -> str:
         raise RuntimeError('HF_WHISPER_ENDPOINT_URL and HF_WHISPER_API_TOKEN are required')
 
     chunks = bytearray()
+    events_seen = []
 
     async def forward():
         started = False
         while True:
-            event = await plivo.receive_json()
+            try:
+                event = await plivo.receive_json()
+            except WebSocketDisconnect as exc:
+                logger.warning(
+                    'whisper_manglish_hf: Plivo disconnected code=%s reason=%r after %d event(s): %r',
+                    exc.code, exc.reason, len(events_seen), events_seen[-5:],
+                )
+                raise
+            events_seen.append(event.get('event'))
             if event.get('event') == 'start':
                 start = event['start']
                 fmt = start.get('mediaFormat', {})
                 if (start.get('callId') != call_uuid
                         or fmt.get('encoding') != 'audio/x-mulaw'
                         or int(fmt.get('sampleRate', 0)) != 8000):
-                    raise ValueError('Unexpected Plivo stream metadata')
+                    raise ValueError(f'Unexpected Plivo stream metadata: {start!r}')
                 started = True
             elif event.get('event') == 'media':
                 if not started:
@@ -77,16 +90,6 @@ async def stream_utterance(plivo, call_uuid: str) -> str:
             elif event.get('event') == 'stop':
                 return
 
-    # DIAGNOSTIC: reading from Plivo immediately after accept() produced an
-    # early clean disconnect (code 1000, zero media frames) in production
-    # testing on 2026-09-14. The vendor adapters don't hit this because their
-    # own websocket handshake to Deepgram/Sarvam naturally takes ~50-300ms
-    # before their first plivo.receive_json(); this adapter has no equivalent
-    # outbound call, so nothing delays it. This sleep imitates that delay to
-    # test whether it's a race in Plivo's own stream setup. If calls still
-    # disconnect immediately with this in place, the timing theory is wrong
-    # and this should be removed rather than tuned larger.
-    await asyncio.sleep(0.2)
     task = asyncio.create_task(forward())
     try:
         await asyncio.wait_for(task, timeout=config.HF_WHISPER_TURN_TIMEOUT)
