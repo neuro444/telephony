@@ -13,6 +13,10 @@ PRESETS = {
     'sarvam': ('SARVAM_MODEL', 'saaras:v3', 'SARVAM_API_KEY'),
     'elevenlabs': ('ELEVENLABS_STT_MODEL', 'scribe_v2_realtime', 'ELEVENLABS_API_KEY'),
     'plivo': ('PLIVO_SPEECH_MODEL', 'phone_call', None),
+    # Experimental: self-hosted Manglish Whisper on a scale-to-zero HF Inference
+    # Endpoint. No selectable model name; HF_WHISPER_ENDPOINT_URL must also be
+    # set manually in .env (endpoint-specific, no sane default to fall back to).
+    'whisper_manglish_hf': (None, None, 'HF_WHISPER_API_TOKEN'),
 }
 
 
@@ -42,7 +46,7 @@ def main():
         changes = {'STT_PROVIDER': selected}
         if args.model:
             changes[model_key] = args.model
-        elif not values.get(model_key):
+        elif model_key and not values.get(model_key):
             changes[model_key] = default_model
         for key, value in changes.items():
             pattern = r'^\s*(?:export\s+)?' + key + r'\s*=.*$'
@@ -62,14 +66,19 @@ def main():
                 os.unlink(temp)
     if args.provider != 'show':
         values.update(changes)
-    print(f'Phone STT: {selected} | Model: {values.get(model_key) or default_model}')
+    if model_key:
+        print(f'Phone STT: {selected} | Model: {values.get(model_key) or default_model}')
+    else:
+        print(f'Phone STT: {selected}')
     print('API key: ' + ('not required for built-in STT' if not key_name else 'SET' if values.get(key_name) else 'MISSING'))
+    if selected == 'whisper_manglish_hf':
+        print('Endpoint URL: ' + ('SET' if values.get('HF_WHISPER_ENDPOINT_URL') else 'MISSING — set HF_WHISPER_ENDPOINT_URL manually in .env'))
     print('Configuration file:', path)
     if args.provider != 'show':
         print('Apply on this server: docker compose up -d --force-recreate gateway')
         print('If code changed too: docker compose up -d --build gateway')
     else:
-        print('Switch: ./stt assemblyai [--model MODEL] | ./stt deepgram | ./stt sarvam | ./stt elevenlabs | ./stt plivo')
+        print('Switch: ./stt assemblyai [--model MODEL] | ./stt deepgram | ./stt sarvam | ./stt elevenlabs | ./stt plivo | ./stt whisper_manglish_hf')
     print('Shows .env selection; running containers retain their settings until recreated.')
 
 

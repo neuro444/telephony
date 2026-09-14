@@ -77,10 +77,11 @@ TRANSFER_TIMEOUT = _int("TRANSFER_TIMEOUT", 25)
 # ElevenLabs voice + model. The brain's .env already names a chosen
 # Indian-accent voice (ELEVEN_VOICE) — use the same id here.
 STT_PROVIDER = os.getenv("STT_PROVIDER", "deepgram").lower()
-if STT_PROVIDER not in {"plivo", "deepgram", "sarvam", "elevenlabs", "assemblyai"}:
-    raise ValueError("STT_PROVIDER must be plivo, deepgram, sarvam, elevenlabs, or assemblyai")
+if STT_PROVIDER not in {"plivo", "deepgram", "sarvam", "elevenlabs", "assemblyai", "whisper_manglish_hf"}:
+    raise ValueError("STT_PROVIDER must be plivo, deepgram, sarvam, elevenlabs, assemblyai, or whisper_manglish_hf")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 DEEPGRAM_MODEL = os.getenv("DEEPGRAM_MODEL", "nova-3")
+DEEPGRAM_LANGUAGE = os.getenv("DEEPGRAM_LANGUAGE", "multi")
 DEEPGRAM_ENDPOINTING_MS = _int("DEEPGRAM_ENDPOINTING_MS", 700)
 DEEPGRAM_TURN_TIMEOUT = _int("DEEPGRAM_TURN_TIMEOUT", 30)
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
@@ -99,6 +100,12 @@ SPEECH_HINTS = os.getenv("SPEECH_HINTS", "")  # generated from menu/menu_flat.js
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
 ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID", "eleven_turbo_v2_5")
+# Experimental: self-hosted Manglish Whisper fine-tune on a Hugging Face
+# Inference Endpoint. One HTTP call per utterance, not a streaming session;
+# scale-to-zero cold starts are possible after idle periods.
+HF_WHISPER_ENDPOINT_URL = os.getenv("HF_WHISPER_ENDPOINT_URL", "")
+HF_WHISPER_API_TOKEN = os.getenv("HF_WHISPER_API_TOKEN", "")
+HF_WHISPER_TURN_TIMEOUT = _int("HF_WHISPER_TURN_TIMEOUT", 60)
 
 # Customer audio debug capture: opt in; optional comma-separated E.164 test callers.
 DEBUG_CUSTOMER_AUDIO = os.getenv("DEBUG_CUSTOMER_AUDIO", "false").lower() in {"true", "1", "yes"}

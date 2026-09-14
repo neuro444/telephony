@@ -32,6 +32,7 @@ from speech.assemblyai_stt import stream_utterance as assemblyai_stream_utteranc
 from speech.deepgram_stt import stream_utterance
 from speech.sarvam_stt import stream_utterance as sarvam_stream_utterance
 from speech.elevenlabs_stt import stream_utterance as elevenlabs_stream_utterance
+from speech.whisper_manglish_hf_stt import stream_utterance as whisper_manglish_hf_stream_utterance
 from speech.elevenlabs_tts import TTSUnavailable, synthesize
 
 logging.basicConfig(level=logging.INFO)
@@ -88,6 +89,8 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("ELEVENLABS_API_KEY is required for ElevenLabs STT")
     if config.STT_PROVIDER == "assemblyai" and not config.ASSEMBLY_API_KEY:
         raise RuntimeError("ASSEMBLY_API_KEY is required for AssemblyAI STT")
+    if config.STT_PROVIDER == "whisper_manglish_hf" and not (config.HF_WHISPER_ENDPOINT_URL and config.HF_WHISPER_API_TOKEN):
+        raise RuntimeError("HF_WHISPER_ENDPOINT_URL and HF_WHISPER_API_TOKEN are required for whisper_manglish_hf STT")
     logger.info("Phone STT provider=%s assembly_model=%s", config.STT_PROVIDER, config.ASSEMBLY_MODEL)
     _prewarm_fixed_phrases()
     yield
@@ -425,7 +428,7 @@ async def fallback(params: dict = Depends(verify_voice)) -> Response:
 
 def _continue_response(value: str, call_uuid: str, *, speak: bool = False) -> Response:
     state = calls.get(call_uuid)
-    if state.stt_provider not in {"deepgram", "sarvam", "elevenlabs", "assemblyai"}:
+    if state.stt_provider not in {"deepgram", "sarvam", "elevenlabs", "assemblyai", "whisper_manglish_hf"}:
         builder = voice_xml.speak_and_continue if speak else voice_xml.play_and_continue
         return xml_response(builder(value))
     state.stream_token = secrets.token_urlsafe(32)
@@ -442,6 +445,7 @@ def _continue_response(value: str, call_uuid: str, *, speak: bool = False) -> Re
         "assemblyai": config.ASSEMBLY_TURN_TIMEOUT,
         "sarvam": config.SARVAM_TURN_TIMEOUT,
         "elevenlabs": config.ELEVENLABS_STT_TURN_TIMEOUT,
+        "whisper_manglish_hf": config.HF_WHISPER_TURN_TIMEOUT,
     }.get(state.stt_provider, config.DEEPGRAM_TURN_TIMEOUT)
     return xml_response(voice_xml.stream_and_continue(f"<{tag}>{escape(value)}</{tag}>", url, state.stream_token,
         timeout=timeout))
@@ -453,7 +457,7 @@ async def voice_stream(websocket: WebSocket, call_uuid: str, token: str):
     # A short-lived, single-use capability generated only by signed call webhooks.
     state = calls.get(call_uuid)
     config.set_carrier(state.telephony_provider)
-    if (state.finalized or state.stt_provider not in {"deepgram", "sarvam", "elevenlabs", "assemblyai"} or state.stream_claimed
+    if (state.finalized or state.stt_provider not in {"deepgram", "sarvam", "elevenlabs", "assemblyai", "whisper_manglish_hf"} or state.stream_claimed
             or not state.stream_token or not hmac.compare_digest(token, state.stream_token)):
         await websocket.close(code=1008)
         return
@@ -468,6 +472,7 @@ async def voice_stream(websocket: WebSocket, call_uuid: str, token: str):
             "assemblyai": assemblyai_stream_utterance,
             "sarvam": sarvam_stream_utterance,
             "elevenlabs": elevenlabs_stream_utterance,
+            "whisper_manglish_hf": whisper_manglish_hf_stream_utterance,
         }.get(state.stt_provider, stream_utterance)
         state.stream_transcript = await adapter(capture, call_uuid)
     except Exception as exc:
@@ -511,7 +516,7 @@ async def stream_status(params: dict = Depends(verify_voice)) -> Response:
     """Observe Plivo stream lifecycle without changing turn state on late callbacks."""
     reason = params.get("StatusReason", params.get("Error", ""))
     reason = re.sub(r"(?:https?|wss?)://\S+", "[url]", reason)
-    for secret in (config.DEEPGRAM_API_KEY, config.SARVAM_API_KEY, config.ASSEMBLY_API_KEY, config.PLIVO_AUTH_TOKEN, config.TWILIO_AUTH_TOKEN):
+    for secret in (config.DEEPGRAM_API_KEY, config.SARVAM_API_KEY, config.ASSEMBLY_API_KEY, config.HF_WHISPER_API_TOKEN, config.PLIVO_AUTH_TOKEN, config.TWILIO_AUTH_TOKEN):
         if secret:
             reason = reason.replace(secret, "[redacted]")
     logger.info("%s stream status event=%r reason=%r", config.current_carrier(),
