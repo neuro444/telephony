@@ -166,3 +166,17 @@ def test_stream_status_logs_failure_without_mutating_turn(client, caplog):
 def test_stream_status_requires_signature():
     from fastapi.testclient import TestClient
     assert TestClient(gateway.app).post('/voice/stream_status', data={}).status_code == 403
+
+
+def test_keyterms_capped_at_verified_safe_count(monkeypatch):
+    # Deepgram's stated "500 token" keyterm limit does not match its actual
+    # enforcement (verified against the live API: 72 of our real menu
+    # keyterms succeeds, 73 fails, despite both being far under 500 words).
+    # Cap at a fixed, empirically-safe entry count instead of trying to
+    # reproduce Deepgram's undocumented tokenizer.
+    hints = ",".join(f"Term {i}" for i in range(100))
+    monkeypatch.setattr(config, "SPEECH_HINTS", hints)
+    keyterms = [h.strip() for h in config.SPEECH_HINTS.split(",") if h.strip()]
+    capped = deepgram_stt._capped_keyterms(keyterms)
+    assert capped == keyterms[:deepgram_stt.DEEPGRAM_MAX_KEYTERMS]
+    assert len(capped) == 60

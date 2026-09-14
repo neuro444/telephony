@@ -8,9 +8,21 @@ from websockets.asyncio.client import connect
 
 import config
 
-# Deepgram's keyterm prompting (nova-3 only) accepts at most 100 terms per
-# request; sending more causes Deepgram to reject or ignore the parameter.
-DEEPGRAM_MAX_KEYTERMS = 100
+# Deepgram's keyterm prompting (nova-3 only) rejects the whole request with
+# HTTP 400 ("Keyterm limit exceeded... maximum number of tokens... is 500")
+# well before any word-count of 500 is reached - "tokens" here means
+# Deepgram's own subword tokenization, which is not reproducible client-side
+# and runs far higher per word for non-English proper nouns (e.g. Kerala
+# dish names) than for plain English. Verified empirically against the live
+# API: 72 of our menu keyterms (195 whitespace-split words) succeeds, 73
+# terms (197 words) fails. Capping at 60 keeps a safety margin below that
+# measured boundary instead of trusting Deepgram's stated limit or trying to
+# reproduce its tokenizer.
+DEEPGRAM_MAX_KEYTERMS = 60
+
+
+def _capped_keyterms(keyterms: list[str]) -> list[str]:
+    return keyterms[:DEEPGRAM_MAX_KEYTERMS]
 
 
 async def stream_utterance(plivo, call_uuid: str) -> str:
@@ -23,7 +35,7 @@ async def stream_utterance(plivo, call_uuid: str) -> str:
         "encoding": "mulaw", "sample_rate": 8000, "channels": 1,
         "interim_results": "true", "smart_format": "true",
         "endpointing": config.DEEPGRAM_ENDPOINTING_MS,
-        "keyterm": keyterms[:DEEPGRAM_MAX_KEYTERMS],
+        "keyterm": _capped_keyterms(keyterms),
     }
     parts = []
     async with connect(
