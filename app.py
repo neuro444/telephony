@@ -137,7 +137,8 @@ def tts_cached(text: str, call_uuid: str, *, use_phrase_cache: bool = False) -> 
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "brain_url": config.CHAT_MANAGER_URL}
+    from stt_status import current_status
+    return {"status": "ok", "brain_url": config.CHAT_MANAGER_URL, "stt": current_status()}
 
 
 @app.get("/orders/recent", dependencies=[Depends(require_dashboard_api_key)])

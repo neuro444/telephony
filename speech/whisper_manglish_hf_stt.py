@@ -2,6 +2,7 @@
 on a Hugging Face Inference Endpoint. Unlike the other adapters, this is a
 single HTTP call per turn, not a streaming vendor session; end-of-turn is
 Plivo's own "stop" event."""
+import asyncio
 import base64
 import csv
 import struct
@@ -56,23 +57,43 @@ async def stream_utterance(plivo, call_uuid: str) -> str:
         raise RuntimeError('HF_WHISPER_ENDPOINT_URL and HF_WHISPER_API_TOKEN are required')
 
     chunks = bytearray()
-    started = False
-    while True:
-        event = await plivo.receive_json()
-        if event.get('event') == 'start':
-            start = event['start']
-            fmt = start.get('mediaFormat', {})
-            if (start.get('callId') != call_uuid
-                    or fmt.get('encoding') != 'audio/x-mulaw'
-                    or int(fmt.get('sampleRate', 0)) != 8000):
-                raise ValueError('Unexpected Plivo stream metadata')
-            started = True
-        elif event.get('event') == 'media':
-            if not started:
-                raise ValueError('Audio arrived before stream metadata')
-            chunks += base64.b64decode(event['media']['payload'], validate=True)
-        elif event.get('event') == 'stop':
-            break
+
+    async def forward():
+        started = False
+        while True:
+            event = await plivo.receive_json()
+            if event.get('event') == 'start':
+                start = event['start']
+                fmt = start.get('mediaFormat', {})
+                if (start.get('callId') != call_uuid
+                        or fmt.get('encoding') != 'audio/x-mulaw'
+                        or int(fmt.get('sampleRate', 0)) != 8000):
+                    raise ValueError('Unexpected Plivo stream metadata')
+                started = True
+            elif event.get('event') == 'media':
+                if not started:
+                    raise ValueError('Audio arrived before stream metadata')
+                chunks.extend(base64.b64decode(event['media']['payload'], validate=True))
+            elif event.get('event') == 'stop':
+                return
+
+    # DIAGNOSTIC: reading from Plivo immediately after accept() produced an
+    # early clean disconnect (code 1000, zero media frames) in production
+    # testing on 2026-09-14. The vendor adapters don't hit this because their
+    # own websocket handshake to Deepgram/Sarvam naturally takes ~50-300ms
+    # before their first plivo.receive_json(); this adapter has no equivalent
+    # outbound call, so nothing delays it. This sleep imitates that delay to
+    # test whether it's a race in Plivo's own stream setup. If calls still
+    # disconnect immediately with this in place, the timing theory is wrong
+    # and this should be removed rather than tuned larger.
+    await asyncio.sleep(0.2)
+    task = asyncio.create_task(forward())
+    try:
+        await asyncio.wait_for(task, timeout=config.HF_WHISPER_TURN_TIMEOUT)
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     if not chunks:
         return ''
